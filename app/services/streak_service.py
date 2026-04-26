@@ -1,13 +1,14 @@
 from datetime import date
-from sqlalchemy.ext.asyncio import AsyncSession
+
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import Streak
 
 
 class StreakService:
     @staticmethod
-    async def update(db: AsyncSession, user_id: int) -> int:
+    async def update(db: AsyncSession, user_id: int) -> Streak:
         today = date.today()
 
         result = await db.execute(
@@ -15,7 +16,6 @@ class StreakService:
         )
         streak = result.scalar_one_or_none()
 
-        # 🔥 agar yo‘q bo‘lsa yaratamiz
         if not streak:
             streak = Streak(
                 user_id=user_id,
@@ -24,16 +24,15 @@ class StreakService:
                 last_active_date=today,
             )
             db.add(streak)
-            await db.commit()
-            return 1
+            await db.flush()
+            return streak
 
-        # 🔥 MUHIM FIX
-        last_date = streak.last_active_date
+        last_active_date = streak.last_active_date
 
-        if last_date == today:
-            return streak.streak
+        if last_active_date == today:
+            return streak
 
-        if last_date and (today - last_date).days == 1:
+        if last_active_date and (today - last_active_date).days == 1:
             streak.streak += 1
         else:
             streak.streak = 1
@@ -43,6 +42,5 @@ class StreakService:
 
         streak.last_active_date = today
 
-        await db.commit()
-
-        return streak.streak
+        await db.flush()
+        return streak
