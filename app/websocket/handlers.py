@@ -20,8 +20,7 @@ class ConnectionManager:
         print(f"✅ User {user_id} connected")
 
     def disconnect(self, user_id: int):
-        if str(user_id) in self.active_connections:
-            del self.active_connections[str(user_id)]
+        self.active_connections.pop(str(user_id), None)
         print(f"❌ User {user_id} disconnected")
 
     async def send_personal_message(self, message: dict, user_id: int):
@@ -32,27 +31,48 @@ class ConnectionManager:
             except Exception as e:
                 print(f"❌ Send error to {user_id}: {e}")
 
-    async def broadcast_to_room(self, message: dict, room_id: str, exclude_user_id: int | None = None):
-        room = room_manager.duels.get(room_id)
-
-        if room:
-            if room.player1 and room.player1.user_id != exclude_user_id:
-                await self.send_personal_message(message, room.player1.user_id)
-
-            if room.player2 and room.player2.user_id != exclude_user_id:
-                await self.send_personal_message(message, room.player2.user_id)
-
-            return
-
-        team_room = room_manager.team_fights.get(room_id)
-
-        if team_room:
-            for player in team_room.team_a + team_room.team_b:
-                if player.user_id != exclude_user_id:
-                    await self.send_personal_message(message, player.user_id)
-
 
 manager = ConnectionManager()
+
+
+async def send_duel_final(final_data: dict):
+    if not final_data:
+        return
+
+    p1_id = final_data["player1_id"]
+    p2_id = final_data["player2_id"]
+
+    p1_score = final_data["scores"]["player1"]
+    p2_score = final_data["scores"]["player2"]
+
+    p1_xp = final_data["xp"]["player1"]
+    p2_xp = final_data["xp"]["player2"]
+
+    await manager.send_personal_message(
+        {
+            **final_data,
+            "my_score": p1_score,
+            "opponent_score": p2_score,
+            "my_answered": final_data["answered"]["player1"],
+            "opponent_answered": final_data["answered"]["player2"],
+            "my_xp": p1_xp,
+            "opponent_xp": p2_xp,
+        },
+        p1_id,
+    )
+
+    await manager.send_personal_message(
+        {
+            **final_data,
+            "my_score": p2_score,
+            "opponent_score": p1_score,
+            "my_answered": final_data["answered"]["player2"],
+            "opponent_answered": final_data["answered"]["player1"],
+            "my_xp": p2_xp,
+            "opponent_xp": p1_xp,
+        },
+        p2_id,
+    )
 
 
 async def handle_websocket(websocket: WebSocket, user_id: int):
@@ -96,60 +116,25 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
                         questions = await TestService.build_random_questions(db, limit=20)
                         await room_manager.set_duel_questions(room_id, questions)
 
-                    await manager.broadcast_to_room(
-                        {
-                            "event": "duel_started",
-                            "room_id": room_id,
-                            "questions": questions,
-                            "total_questions": 20,
-                            "time_per_question": 10,
-                        },
-                        room_id,
-                    )
+                    room = room_manager.duels.get(room_id)
+
+                    if room:
+                        for p in [room.player1, room.player2]:
+                            await manager.send_personal_message(
+                                {
+                                    "event": "duel_started",
+                                    "room_id": room_id,
+                                    "questions": questions,
+                                    "total_questions": 20,
+                                    "time_per_question": 10,
+                                },
+                                p.user_id,
+                            )
                 else:
                     await manager.send_personal_message(
                         {
                             "event": "duel_queue",
                             "status": "waiting",
-                        },
-                        user_id,
-                    )
-
-            elif event == "join_team":
-                team = message.get("team")
-                result = await room_manager.join_team_queue(player, team)
-
-                if result.get("status") == "ready":
-                    room_id = result["room_id"]
-
-                    async with SessionLocal() as db:
-                        questions = await TestService.build_random_questions(db, limit=20)
-                        await room_manager.set_team_fight_questions(room_id, questions)
-
-                    await manager.broadcast_to_room(
-                        {
-                            "event": "team_fight_started",
-                            "room_id": room_id,
-                            "questions": questions,
-                            "total_questions": 20,
-                            "time_per_question": 10,
-                            "team_a": [
-                                {"user_id": p.user_id, "nickname": p.nickname}
-                                for p in room_manager.team_fights[room_id].team_a
-                            ],
-                            "team_b": [
-                                {"user_id": p.user_id, "nickname": p.nickname}
-                                for p in room_manager.team_fights[room_id].team_b
-                            ],
-                        },
-                        room_id,
-                    )
-                else:
-                    await manager.send_personal_message(
-                        {
-                            "event": "team_queue",
-                            "status": result["status"],
-                            "team": result.get("team"),
                         },
                         user_id,
                     )
@@ -161,17 +146,19 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
                 is_correct = bool(message.get("is_correct"))
                 question_index = int(message.get("question_index", 0))
                 time_left = float(message.get("time_left", 0))
+
                 word_id = message.get("word_id")
                 unit_id = message.get("unit_id")
                 mode = message.get("mode") or "duel_test"
                 correct_answer = message.get("correct_answer")
-                xp_gain = 10 if is_correct else 2
+
+                saved_xp = 0
 
                 if room_type == "duel":
                     if word_id and unit_id:
                         try:
                             async with SessionLocal() as db:
-                                await LearningService.process_answer(
+                                res = await LearningService.process_answer(
                                     db=db,
                                     user_id=user_id,
                                     word_id=int(word_id),
@@ -181,6 +168,7 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
                                     user_answer=answer,
                                     correct_answer=correct_answer,
                                 )
+                                saved_xp = int(res.get("xp_gain", 0))
                         except Exception as e:
                             print(f"❌ XP save error: {e}")
 
@@ -189,37 +177,14 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
                         user_id=user_id,
                         answer=answer,
                         is_correct=is_correct,
-                        xp_gain=xp_gain,
+                        xp_gain=saved_xp,
                         question_index=question_index,
                         time_left=time_left,
                     )
 
                     if result:
                         if result.get("type") == "finished":
-                            final_data = result["result"]
-
-                            p1_id = final_data["player1_id"]
-                            p2_id = final_data["player2_id"]
-                            p1_score = final_data["scores"]["player1"]
-                            p2_score = final_data["scores"]["player2"]
-
-                            await manager.send_personal_message(
-                                {
-                                    **final_data,
-                                    "my_score": p1_score,
-                                    "opponent_score": p2_score,
-                                },
-                                p1_id,
-                            )
-
-                            await manager.send_personal_message(
-                                {
-                                    **final_data,
-                                    "my_score": p2_score,
-                                    "opponent_score": p1_score,
-                                },
-                                p2_id,
-                            )
+                            await send_duel_final(result["result"])
 
                         elif result.get("type") == "progress":
                             player_id = result["player_id"]
@@ -232,7 +197,9 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
                                     "opponent_score": result["opponent_score"],
                                     "my_answered": result["player_answered"],
                                     "opponent_answered": result["opponent_answered"],
-                                    "player_finished": result["player_finished"],
+                                    "opponent_finished": result["opponent_finished"],
+                                    "my_xp": result["player_xp"],
+                                    "opponent_xp": result["opponent_xp"],
                                 },
                                 player_id,
                             )
@@ -245,21 +212,94 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
                                     "my_answered": result["opponent_answered"],
                                     "opponent_answered": result["player_answered"],
                                     "opponent_finished": result["player_finished"],
+                                    "my_xp": result["opponent_xp"],
+                                    "opponent_xp": result["player_xp"],
                                 },
                                 opponent_id,
                             )
 
-                elif room_type == "team":
-                    result = await room_manager.submit_team_answer(
-                        room_id,
-                        user_id,
-                        answer,
-                        is_correct,
-                        xp_gain,
-                    )
+            elif event == "finish_duel":
+                room_id = message.get("room_id")
+                result = await room_manager.mark_player_finished(room_id, user_id)
 
-                    if result:
-                        await manager.broadcast_to_room(result, room_id, user_id)
+                if result:
+                    if result.get("type") == "finished":
+                        await send_duel_final(result["result"])
+
+                    elif result.get("type") == "progress":
+                        player_id = result["player_id"]
+                        opponent_id = result["opponent_id"]
+
+                        await manager.send_personal_message(
+                            {
+                                "event": "player_finished",
+                                "my_score": result["player_score"],
+                                "opponent_score": result["opponent_score"],
+                                "my_answered": result["player_answered"],
+                                "opponent_answered": result["opponent_answered"],
+                                "opponent_finished": result["opponent_finished"],
+                                "my_xp": result["player_xp"],
+                                "opponent_xp": result["opponent_xp"],
+                            },
+                            player_id,
+                        )
+
+                        await manager.send_personal_message(
+                            {
+                                "event": "duel_progress",
+                                "my_score": result["opponent_score"],
+                                "opponent_score": result["player_score"],
+                                "my_answered": result["opponent_answered"],
+                                "opponent_answered": result["player_answered"],
+                                "opponent_finished": result["player_finished"],
+                                "my_xp": result["opponent_xp"],
+                                "opponent_xp": result["player_xp"],
+                            },
+                            opponent_id,
+                        )
+
+            elif event == "join_team":
+                team = message.get("team")
+                result = await room_manager.join_team_queue(player, team)
+
+                if result.get("status") == "ready":
+                    room_id = result["room_id"]
+
+                    async with SessionLocal() as db:
+                        questions = await TestService.build_random_questions(db, limit=20)
+                        await room_manager.set_team_fight_questions(room_id, questions)
+
+                    room = room_manager.team_fights.get(room_id)
+
+                    if room:
+                        for p in room.team_a + room.team_b:
+                            await manager.send_personal_message(
+                                {
+                                    "event": "team_fight_started",
+                                    "room_id": room_id,
+                                    "questions": questions,
+                                    "total_questions": 20,
+                                    "time_per_question": 10,
+                                    "team_a": [
+                                        {"user_id": x.user_id, "nickname": x.nickname}
+                                        for x in room.team_a
+                                    ],
+                                    "team_b": [
+                                        {"user_id": x.user_id, "nickname": x.nickname}
+                                        for x in room.team_b
+                                    ],
+                                },
+                                p.user_id,
+                            )
+                else:
+                    await manager.send_personal_message(
+                        {
+                            "event": "team_queue",
+                            "status": result["status"],
+                            "team": result.get("team"),
+                        },
+                        user_id,
+                    )
 
             elif event == "leave_queue":
                 queue_type = message.get("queue_type")

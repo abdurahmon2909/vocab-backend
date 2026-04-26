@@ -14,6 +14,7 @@ class Player:
     socket_id: str
     is_ready: bool = False
     score: int = 0
+    xp_gain: int = 0
     current_word: dict | None = None
     answers: List[dict] = field(default_factory=list)
     finished_at: datetime | None = None
@@ -32,6 +33,7 @@ class DuelRoom:
     start_time: datetime | None = None
     winner: int | None = None
     questions: List[dict] = field(default_factory=list)
+    final_sent: bool = False
 
 
 @dataclass
@@ -81,6 +83,7 @@ class RoomManager:
 
         for p in [player1, player2]:
             p.score = 0
+            p.xp_gain = 0
             p.answers = []
             p.finished_at = None
 
@@ -108,6 +111,27 @@ class RoomManager:
             if room.questions:
                 room.current_word = room.questions[0]
 
+    def _get_duel_players(self, room: DuelRoom, user_id: int):
+        player = room.player1 if room.player1.user_id == user_id else room.player2
+        opponent = room.player2 if room.player1.user_id == user_id else room.player1
+        return player, opponent
+
+    def _progress_payload(self, room_id: str, player: Player, opponent: Player):
+        return {
+            "type": "progress",
+            "room_id": room_id,
+            "player_id": player.user_id,
+            "opponent_id": opponent.user_id,
+            "player_score": player.score,
+            "opponent_score": opponent.score,
+            "player_answered": len(player.answers),
+            "opponent_answered": len(opponent.answers),
+            "player_finished": bool(player.finished_at),
+            "opponent_finished": bool(opponent.finished_at),
+            "player_xp": player.xp_gain,
+            "opponent_xp": opponent.xp_gain,
+        }
+
     async def submit_duel_answer(
         self,
         room_id: str,
@@ -120,19 +144,12 @@ class RoomManager:
     ):
         room = self.duels.get(room_id)
 
-        if not room or room.status != "active":
+        if not room or room.status != "active" or not room.player2:
             return None
 
-        if not room.player2:
-            return None
+        player, opponent = self._get_duel_players(room, user_id)
 
-        player = room.player1 if room.player1.user_id == user_id else room.player2
-        opponent = room.player2 if room.player1.user_id == user_id else room.player1
-
-        if not player:
-            return None
-
-        if player.finished_at:
+        if not player or player.finished_at:
             return None
 
         already_answered = any(
@@ -150,13 +167,15 @@ class RoomManager:
         if is_correct:
             player.score += 1
 
+        player.xp_gain += max(0, int(xp_gain or 0))
+
         player.answers.append(
             {
                 "question_index": question_index,
                 "word_id": current_word.get("word_id") if current_word else None,
                 "answer": answer,
                 "is_correct": is_correct,
-                "xp_gain": xp_gain if is_correct else 0,
+                "xp_gain": xp_gain,
                 "time_left": time_left,
             }
         )
@@ -168,24 +187,34 @@ class RoomManager:
             player.finished_at = datetime.now()
 
         if room.player1.finished_at and room.player2.finished_at:
-            finish_result = await self.finish_duel(room_id)
             return {
                 "type": "finished",
-                "room": room,
-                "result": finish_result,
+                "result": await self.finish_duel(room_id),
             }
 
-        return {
-            "type": "progress",
-            "room_id": room_id,
-            "player_id": player.user_id,
-            "opponent_id": opponent.user_id,
-            "player_score": player.score,
-            "opponent_score": opponent.score,
-            "player_answered": len(player.answers),
-            "opponent_answered": len(opponent.answers),
-            "player_finished": bool(player.finished_at),
-        }
+        return self._progress_payload(room_id, player, opponent)
+
+    async def mark_player_finished(self, room_id: str, user_id: int):
+        room = self.duels.get(room_id)
+
+        if not room or room.status != "active" or not room.player2:
+            return None
+
+        player, opponent = self._get_duel_players(room, user_id)
+
+        if not player:
+            return None
+
+        if not player.finished_at:
+            player.finished_at = datetime.now()
+
+        if room.player1.finished_at and room.player2.finished_at:
+            return {
+                "type": "finished",
+                "result": await self.finish_duel(room_id),
+            }
+
+        return self._progress_payload(room_id, player, opponent)
 
     async def finish_duel(self, room_id: str):
         room = self.duels.get(room_id)
@@ -193,23 +222,30 @@ class RoomManager:
         if not room:
             return None
 
+        if room.final_sent:
+            return None
+
+        room.final_sent = True
         room.status = "finished"
 
         p1 = room.player1
         p2 = room.player2
+
+        if not p1.finished_at:
+            p1.finished_at = datetime.now()
+
+        if not p2.finished_at:
+            p2.finished_at = datetime.now()
 
         if p1.score > p2.score:
             room.winner = p1.user_id
         elif p2.score > p1.score:
             room.winner = p2.user_id
         else:
-            if p1.finished_at and p2.finished_at:
-                if p1.finished_at < p2.finished_at:
-                    room.winner = p1.user_id
-                elif p2.finished_at < p1.finished_at:
-                    room.winner = p2.user_id
-                else:
-                    room.winner = None
+            if p1.finished_at < p2.finished_at:
+                room.winner = p1.user_id
+            elif p2.finished_at < p1.finished_at:
+                room.winner = p2.user_id
             else:
                 room.winner = None
 
@@ -225,6 +261,10 @@ class RoomManager:
             "answered": {
                 "player1": len(p1.answers),
                 "player2": len(p2.answers),
+            },
+            "xp": {
+                "player1": p1.xp_gain,
+                "player2": p2.xp_gain,
             },
             "finished_at": {
                 "player1": p1.finished_at.isoformat() if p1.finished_at else None,
@@ -243,10 +283,7 @@ class RoomManager:
         for t in ["team_a", "team_b"]:
             for p in self.team_fight_queue[t]:
                 if p.user_id == player.user_id:
-                    return {
-                        "status": "already_in_queue",
-                        "team": t,
-                    }
+                    return {"status": "already_in_queue", "team": t}
 
         if not team:
             team = (
@@ -256,14 +293,10 @@ class RoomManager:
             )
 
         self.team_fight_queue[team].append(player)
-        print(f"👥 Team {team} queue: {len(self.team_fight_queue[team])} players")
 
         if len(self.team_fight_queue["team_a"]) >= 2 and len(self.team_fight_queue["team_b"]) >= 2:
             room_id = await self.create_team_fight_room()
-            return {
-                "status": "ready",
-                "room_id": room_id,
-            }
+            return {"status": "ready", "room_id": room_id}
 
         return {
             "status": "waiting",
@@ -288,7 +321,6 @@ class RoomManager:
         self.team_fight_queue["team_b"] = self.team_fight_queue["team_b"][5:]
 
         self.team_fights[room_id] = room
-        print(f"👥 Team fight room created: {room_id}")
         return room_id
 
     async def set_team_fight_questions(self, room_id: str, questions: List[dict]):
