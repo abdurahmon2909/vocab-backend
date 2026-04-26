@@ -79,12 +79,10 @@ class RoomManager:
     async def create_duel_room(self, player1: Player, player2: Player) -> str:
         room_id = f"duel_{uuid.uuid4().hex[:8]}"
 
-        player1.score = 0
-        player2.score = 0
-        player1.answers = []
-        player2.answers = []
-        player1.finished_at = None
-        player2.finished_at = None
+        for p in [player1, player2]:
+            p.score = 0
+            p.answers = []
+            p.finished_at = None
 
         room = DuelRoom(
             room_id=room_id,
@@ -125,7 +123,11 @@ class RoomManager:
         if not room or room.status != "active":
             return None
 
+        if not room.player2:
+            return None
+
         player = room.player1 if room.player1.user_id == user_id else room.player2
+        opponent = room.player2 if room.player1.user_id == user_id else room.player1
 
         if not player:
             return None
@@ -160,23 +162,29 @@ class RoomManager:
         )
 
         next_index = question_index + 1
+        is_player_finished = next_index >= room.total_questions or next_index >= len(room.questions)
 
-        if next_index >= room.total_questions:
+        if is_player_finished:
             player.finished_at = datetime.now()
 
-            if room.player1.finished_at and room.player2.finished_at:
-                return await self.finish_duel(room_id)
-
+        if room.player1.finished_at and room.player2.finished_at:
+            finish_result = await self.finish_duel(room_id)
             return {
-                "event": "player_finished",
-                "score": player.score,
-                "answered": len(player.answers),
+                "type": "finished",
+                "room": room,
+                "result": finish_result,
             }
 
         return {
-            "event": "answer_saved",
-            "score": player.score,
-            "answered": len(player.answers),
+            "type": "progress",
+            "room_id": room_id,
+            "player_id": player.user_id,
+            "opponent_id": opponent.user_id,
+            "player_score": player.score,
+            "opponent_score": opponent.score,
+            "player_answered": len(player.answers),
+            "opponent_answered": len(opponent.answers),
+            "player_finished": bool(player.finished_at),
         }
 
     async def finish_duel(self, room_id: str):
@@ -205,11 +213,11 @@ class RoomManager:
             else:
                 room.winner = None
 
-        self.duels.pop(room_id, None)
-
-        return {
+        result = {
             "event": "duel_finished",
             "winner": room.winner,
+            "player1_id": p1.user_id,
+            "player2_id": p2.user_id,
             "scores": {
                 "player1": p1.score,
                 "player2": p2.score,
@@ -223,6 +231,10 @@ class RoomManager:
                 "player2": p2.finished_at.isoformat() if p2.finished_at else None,
             },
         }
+
+        self.duels.pop(room_id, None)
+
+        return result
 
     async def leave_duel_queue(self, user_id: int):
         self.duel_queue = [p for p in self.duel_queue if p.user_id != user_id]

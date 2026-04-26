@@ -6,6 +6,7 @@ from sqlalchemy import select
 from app.db.session import SessionLocal
 from app.models.models import User, UserXP
 from app.services.test_service import TestService
+from app.services.learning_service import LearningService
 from app.websocket.room_manager import room_manager, Player
 
 
@@ -160,9 +161,29 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
                 is_correct = bool(message.get("is_correct"))
                 question_index = int(message.get("question_index", 0))
                 time_left = float(message.get("time_left", 0))
+                word_id = message.get("word_id")
+                unit_id = message.get("unit_id")
+                mode = message.get("mode") or "duel_test"
+                correct_answer = message.get("correct_answer")
                 xp_gain = 10 if is_correct else 2
 
                 if room_type == "duel":
+                    if word_id and unit_id:
+                        try:
+                            async with SessionLocal() as db:
+                                await LearningService.process_answer(
+                                    db=db,
+                                    user_id=user_id,
+                                    word_id=int(word_id),
+                                    unit_id=int(unit_id),
+                                    mode=mode,
+                                    is_correct=is_correct,
+                                    user_answer=answer,
+                                    correct_answer=correct_answer,
+                                )
+                        except Exception as e:
+                            print(f"❌ XP save error: {e}")
+
                     result = await room_manager.submit_duel_answer(
                         room_id=room_id,
                         user_id=user_id,
@@ -174,10 +195,59 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
                     )
 
                     if result:
-                        if result.get("event") == "duel_finished":
-                            await manager.broadcast_to_room(result, room_id)
-                        else:
-                            await manager.send_personal_message(result, user_id)
+                        if result.get("type") == "finished":
+                            final_data = result["result"]
+
+                            p1_id = final_data["player1_id"]
+                            p2_id = final_data["player2_id"]
+                            p1_score = final_data["scores"]["player1"]
+                            p2_score = final_data["scores"]["player2"]
+
+                            await manager.send_personal_message(
+                                {
+                                    **final_data,
+                                    "my_score": p1_score,
+                                    "opponent_score": p2_score,
+                                },
+                                p1_id,
+                            )
+
+                            await manager.send_personal_message(
+                                {
+                                    **final_data,
+                                    "my_score": p2_score,
+                                    "opponent_score": p1_score,
+                                },
+                                p2_id,
+                            )
+
+                        elif result.get("type") == "progress":
+                            player_id = result["player_id"]
+                            opponent_id = result["opponent_id"]
+
+                            await manager.send_personal_message(
+                                {
+                                    "event": "answer_saved",
+                                    "my_score": result["player_score"],
+                                    "opponent_score": result["opponent_score"],
+                                    "my_answered": result["player_answered"],
+                                    "opponent_answered": result["opponent_answered"],
+                                    "player_finished": result["player_finished"],
+                                },
+                                player_id,
+                            )
+
+                            await manager.send_personal_message(
+                                {
+                                    "event": "duel_progress",
+                                    "my_score": result["opponent_score"],
+                                    "opponent_score": result["player_score"],
+                                    "my_answered": result["opponent_answered"],
+                                    "opponent_answered": result["player_answered"],
+                                    "opponent_finished": result["player_finished"],
+                                },
+                                opponent_id,
+                            )
 
                 elif room_type == "team":
                     result = await room_manager.submit_team_answer(
