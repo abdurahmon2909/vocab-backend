@@ -17,6 +17,16 @@ REQUIRED_UNIT_UNLOCK_PERCENT = 80
 
 class ProgressService:
     @staticmethod
+    def calculate_unit_progress_from_modes(mode_progress: dict) -> int:
+        values = [
+            int(mode_progress.get("writing", {}).get("progress_percent", 0) or 0),
+            int(mode_progress.get("test", {}).get("progress_percent", 0) or 0),
+            int(mode_progress.get("listening", {}).get("progress_percent", 0) or 0),
+        ]
+
+        return int(sum(values) / len(values)) if values else 0
+
+    @staticmethod
     async def get_collections_with_progress(db: AsyncSession, user_id: int):
         collections_result = await db.execute(
             select(Collection)
@@ -255,13 +265,13 @@ class ProgressService:
         )
         mastered = mastered_result.scalar() or 0
 
-        progress_percent = int((mastered / total_words) * 100) if total_words else 0
-
         mode_progress = await ProgressService.get_mode_progress_for_unit(
             db,
             user_id,
             unit_id,
         )
+
+        progress_percent = ProgressService.calculate_unit_progress_from_modes(mode_progress)
 
         required_done = all(
             mode_progress[mode]["progress_percent"] >= REQUIRED_UNIT_UNLOCK_PERCENT
@@ -368,12 +378,12 @@ class ProgressService:
         for unit_id in unit_ids:
             total_words = total_words_map.get(unit_id, 0)
             mastered_words = mastered_map.get(unit_id, 0)
-            progress_percent = int((mastered_words / total_words) * 100) if total_words else 0
+            word_progress_percent = int((mastered_words / total_words) * 100) if total_words else 0
 
             output[unit_id] = {
                 "total_words": total_words,
                 "mastered_words": mastered_words,
-                "progress_percent": progress_percent,
+                "word_progress_percent": word_progress_percent,
             }
 
         return output
@@ -483,10 +493,11 @@ class ProgressService:
             word_stats = word_stats_by_unit.get(unit.id, {
                 "total_words": 0,
                 "mastered_words": 0,
-                "progress_percent": 0,
+                "word_progress_percent": 0,
             })
 
             mode_progress = mode_progress_by_unit.get(unit.id, {})
+            progress_percent = ProgressService.calculate_unit_progress_from_modes(mode_progress)
             required_done = ProgressService.is_mode_progress_completed(mode_progress)
 
             is_unlocked = await ProgressService.is_unit_unlocked(
@@ -501,7 +512,7 @@ class ProgressService:
                 status = "locked"
             elif required_done:
                 status = "completed"
-            elif word_stats["progress_percent"] > 0:
+            elif progress_percent > 0:
                 status = "in_progress"
             else:
                 status = "in_progress"
@@ -514,7 +525,8 @@ class ProgressService:
                 "description": unit.description,
                 "total_words": word_stats["total_words"],
                 "mastered_words": word_stats["mastered_words"],
-                "progress_percent": word_stats["progress_percent"],
+                "word_progress_percent": word_stats["word_progress_percent"],
+                "progress_percent": progress_percent,
                 "mode_progress": mode_progress,
                 "status": status,
                 "is_locked": not is_unlocked,
