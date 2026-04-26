@@ -6,3 +6,4 @@ alembic
 pydantic
 pydantic-settings
 python-multipart
+edge-tts

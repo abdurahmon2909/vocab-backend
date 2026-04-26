@@ -11,7 +11,9 @@ from app.services.mission_service import MissionService
 from app.services.progress_service import ProgressService
 from app.services.test_service import TestService
 from app.services.xp_service import XPService
-
+from fastapi.responses import StreamingResponse
+import edge_tts
+import io
 # ✅ ROUTER aniqlanishi KERAK!
 router = APIRouter(prefix="/api")
 
@@ -296,3 +298,24 @@ async def save_mode_best_progress(
         "progress_percent": progress.progress_percent,
         "is_completed": progress.is_completed,
     }
+
+@router.get("/tts")
+async def tts(text: str):
+    try:
+        communicate = edge_tts.Communicate(
+            text=text,
+            voice="en-US-GuyNeural"  # 🔥 juda yaxshi erkak ovoz
+        )
+
+        audio_stream = io.BytesIO()
+
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_stream.write(chunk["data"])
+
+        audio_stream.seek(0)
+
+        return StreamingResponse(audio_stream, media_type="audio/mpeg")
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
