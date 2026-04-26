@@ -55,7 +55,6 @@ class RoomManager:
         self.team_fight_queue: Dict[str, List[Player]] = {"team_a": [], "team_b": []}
 
     async def join_duel_queue(self, player: Player) -> str:
-        # Check if player already in queue
         for p in self.duel_queue:
             if p.user_id == player.user_id:
                 return None
@@ -83,7 +82,7 @@ class RoomManager:
         )
 
         self.duels[room_id] = room
-        print(f"⚔️ Duel room created: {room_id} between {player1.user_id} and {player2.user_id}")
+        print(f"⚔️ Duel room created: {room_id}")
         return room_id
 
     async def set_duel_questions(self, room_id: str, questions: List[dict]):
@@ -114,7 +113,6 @@ class RoomManager:
             "xp_gain": xp_gain if is_correct else 0
         })
 
-        # Check if both answered
         player_answered = len(player.answers) > room.question_number
         opponent_answered = len(opponent.answers) > room.question_number
 
@@ -157,7 +155,6 @@ class RoomManager:
         self.duel_queue = [p for p in self.duel_queue if p.user_id != user_id]
 
     async def join_team_queue(self, player: Player, team: str = None) -> dict:
-        # Check if player already in queue
         for t in ["team_a", "team_b"]:
             for p in self.team_fight_queue[t]:
                 if p.user_id == player.user_id:
