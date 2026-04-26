@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_user
-from app.models.models import Book, Unit, Word
+from app.models.models import Book, Collection, Unit, Word
 from app.schemas.schemas import AnswerIn
 from app.services.learning_service import LearningService
 from app.services.mission_service import MissionService
@@ -53,6 +53,31 @@ async def get_stats(
     return await ProgressService.get_stats(db, user.tg_id)
 
 
+@router.get("/collections")
+async def get_collections(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    return await ProgressService.get_collections_with_progress(db, user.tg_id)
+
+
+@router.get("/collections/{collection_id}/books")
+async def get_collection_books(
+    collection_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    collection = await db.get(Collection, collection_id)
+    if not collection:
+        raise HTTPException(status_code=404, detail="Collection not found")
+
+    return await ProgressService.get_collection_books_with_progress(
+        db,
+        user.tg_id,
+        collection_id,
+    )
+
+
 @router.get("/books")
 async def get_books(
     db: AsyncSession = Depends(get_db),
@@ -74,6 +99,15 @@ async def get_units(
     return await ProgressService.get_units_with_progress(db, user.tg_id, book_id)
 
 
+@router.get("/units/{unit_id}/access")
+async def get_unit_access(
+    unit_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    return await ProgressService.can_access_unit(db, user.tg_id, unit_id)
+
+
 @router.get("/units/{unit_id}/words")
 async def get_words(
     unit_id: int,
@@ -83,6 +117,10 @@ async def get_words(
     unit = await db.get(Unit, unit_id)
     if not unit:
         raise HTTPException(status_code=404, detail="Unit not found")
+
+    access = await ProgressService.can_access_unit(db, user.tg_id, unit_id)
+    if not access["allowed"]:
+        raise HTTPException(status_code=403, detail=access["reason"])
 
     return await ProgressService.get_words_with_progress(db, user.tg_id, unit_id)
 
@@ -97,6 +135,10 @@ async def get_unit_test(
     unit = await db.get(Unit, unit_id)
     if not unit:
         raise HTTPException(status_code=404, detail="Unit not found")
+
+    access = await ProgressService.can_access_unit(db, user.tg_id, unit_id)
+    if not access["allowed"]:
+        raise HTTPException(status_code=403, detail=access["reason"])
 
     return await TestService.build_unit_questions(db, unit_id, limit)
 
@@ -149,6 +191,10 @@ async def answer(
 
     if word.unit_id != data.unit_id:
         raise HTTPException(status_code=400, detail="Word does not belong to this unit")
+
+    access = await ProgressService.can_access_unit(db, user.tg_id, data.unit_id)
+    if not access["allowed"]:
+        raise HTTPException(status_code=403, detail=access["reason"])
 
     return await LearningService.process_answer(
         db=db,

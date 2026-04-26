@@ -1,4 +1,5 @@
 from datetime import datetime, date
+
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -36,8 +37,8 @@ class User(Base):
     streak = relationship("Streak", back_populates="user", uselist=False)
 
 
-class Book(Base):
-    __tablename__ = "books"
+class Collection(Base):
+    __tablename__ = "collections"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     slug: Mapped[str] = mapped_column(String(120), unique=True, index=True)
@@ -47,6 +48,27 @@ class Book(Base):
     order_index: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    books = relationship("Book", back_populates="collection")
+
+
+class Book(Base):
+    __tablename__ = "books"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    collection_id: Mapped[int | None] = mapped_column(
+        ForeignKey("collections.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    slug: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cover_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    order_index: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    collection = relationship("Collection", back_populates="books")
     units = relationship("Unit", back_populates="book", cascade="all, delete-orphan")
 
 
@@ -83,6 +105,40 @@ class Word(Base):
 
     __table_args__ = (
         UniqueConstraint("unit_id", "english", name="uq_unit_english_word"),
+    )
+
+
+class ModeProgress(Base):
+    __tablename__ = "mode_progress"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.tg_id", ondelete="CASCADE"),
+        index=True,
+    )
+
+    unit_id: Mapped[int] = mapped_column(
+        ForeignKey("units.id", ondelete="CASCADE"),
+        index=True,
+    )
+
+    mode: Mapped[str] = mapped_column(String(40), index=True)
+
+    total_questions: Mapped[int] = mapped_column(Integer, default=0)
+    correct_answers: Mapped[int] = mapped_column(Integer, default=0)
+    progress_percent: Mapped[int] = mapped_column(Integer, default=0)
+    is_completed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "unit_id", "mode", name="uq_user_unit_mode_progress"),
+        Index("ix_mode_progress_user_unit", "user_id", "unit_id"),
     )
 
 
