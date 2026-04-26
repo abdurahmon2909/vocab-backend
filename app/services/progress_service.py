@@ -55,7 +55,7 @@ class ProgressService:
                 continue
 
             units_result = await db.execute(
-                select(Unit.id).where(Unit.book_id.in_(book_ids))
+                select(Unit.id).where(Unit.book_id.in_(book_ids), Unit.is_active == True)
             )
             unit_ids = [row[0] for row in units_result.all()]
 
@@ -129,7 +129,7 @@ class ProgressService:
     @staticmethod
     async def get_single_book_progress(db: AsyncSession, user_id: int, book: Book):
         units_result = await db.execute(
-            select(Unit.id).where(Unit.book_id == book.id)
+            select(Unit.id).where(Unit.book_id == book.id, Unit.is_active == True)
         )
         unit_ids = [row[0] for row in units_result.all()]
 
@@ -421,7 +421,7 @@ class ProgressService:
 
         units_result = await db.execute(
             select(Unit)
-            .where(Unit.book_id == current_unit.book_id)
+            .where(Unit.book_id == current_unit.book_id, Unit.is_active == True)
             .order_by(Unit.order_index, Unit.unit_number)
         )
         units = units_result.scalars().all()
@@ -458,7 +458,7 @@ class ProgressService:
     async def get_units_with_progress(db: AsyncSession, user_id: int, book_id: int):
         units_result = await db.execute(
             select(Unit)
-            .where(Unit.book_id == book_id)
+            .where(Unit.book_id == book_id, Unit.is_active == True)
             .order_by(Unit.order_index, Unit.unit_number)
         )
         units = units_result.scalars().all()

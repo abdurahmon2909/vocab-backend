@@ -58,11 +58,12 @@ class ProfileUpdateOut(BaseModel):
 class LeaderboardUserOut(BaseModel):
     rank: int
     user_id: int
-    nickname: str
+    display_name: str  # 🔥 nickname -> display_name (frontendda shunday ishlatilgan)
     username: str | None = None
     photo_url: str | None = None
     xp: int
     level: int
+    level_progress: int  # 🔥 QO'SHILDI
     badge: str
     badge_icon: str
     is_me: bool = False
@@ -145,10 +146,6 @@ class StatsOut(BaseModel):
     total_wrong: int
     weak_words_count: int
     mastered_words_count: int
-
-class ProfileUpdateOut(BaseModel):
-    nickname: str
-    display_name: str
 
 
 NicknameUpdateIn = ProfileUpdateIn

@@ -82,6 +82,7 @@ class Unit(Base):
     title: Mapped[str] = mapped_column(String(255))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     order_index: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)  # 🔥 YANGI QO'SHILDI
 
     book = relationship("Book", back_populates="units")
     words = relationship("Word", back_populates="unit", cascade="all, delete-orphan")

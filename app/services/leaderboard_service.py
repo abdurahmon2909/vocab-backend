@@ -51,16 +51,18 @@ class LeaderboardService:
 
         for index, (user, xp) in enumerate(rows, start=1):
             level = XPService.level_from_xp(xp or 0)
+            level_progress = XPService.level_progress_percent(xp or 0)  # 🔥 QO'SHILDI
             badge = badge_for_level(level)
 
             item = {
                 "rank": index,
                 "user_id": user.tg_id,
-                "nickname": display_name_for_user(user),
+                "display_name": display_name_for_user(user),
                 "username": user.username,
                 "photo_url": user.photo_url,
                 "xp": xp or 0,
                 "level": level,
+                "level_progress": level_progress,  # 🔥 QO'SHILDI
                 "badge": badge["badge"],
                 "badge_icon": badge["badge_icon"],
                 "is_me": user.tg_id == current_user_id,
@@ -89,16 +91,18 @@ class LeaderboardService:
             if current_row:
                 user, xp = current_row
                 level = XPService.level_from_xp(xp or 0)
+                level_progress = XPService.level_progress_percent(xp or 0)  # 🔥 QO'SHILDI
                 badge = badge_for_level(level)
 
                 me = {
                     "rank": better_count + 1,
                     "user_id": user.tg_id,
-                    "nickname": display_name_for_user(user),
+                    "display_name": display_name_for_user(user),
                     "username": user.username,
                     "photo_url": user.photo_url,
                     "xp": xp or 0,
                     "level": level,
+                    "level_progress": level_progress,  # 🔥 QO'SHILDI
                     "badge": badge["badge"],
                     "badge_icon": badge["badge_icon"],
                     "is_me": True,
