@@ -34,6 +34,8 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # 🔥 Relationship'lar olib tashlandi - xatolikni oldini olish uchun
+
     # Relationships with lazy="joined" to avoid extra queries
     xp = relationship("UserXP", back_populates="user", uselist=False, lazy="joined")
     streak = relationship("Streak", back_populates="user", uselist=False, lazy="joined")
