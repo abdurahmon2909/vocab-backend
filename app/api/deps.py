@@ -37,11 +37,17 @@ async def get_current_user(
     user = result.scalar_one_or_none()
 
     if not user:
+        initial_nickname = " ".join([
+            tg.get("first_name") or "",
+            tg.get("last_name") or "",
+        ]).strip()
+
         user = User(
             tg_id=tg["id"],
             first_name=tg.get("first_name"),
             last_name=tg.get("last_name"),
             username=tg.get("username"),
+            nickname=initial_nickname or tg.get("username") or "Learner",
             photo_url=tg.get("photo_url"),
             language_code=tg.get("language_code"),
             is_premium=bool(tg.get("is_premium", False)),
@@ -70,6 +76,14 @@ async def get_current_user(
         user.language_code = tg.get("language_code")
         user.is_premium = bool(tg.get("is_premium", False))
         user.last_seen_at = datetime.utcnow()
+
+        if not user.nickname:
+            fallback = " ".join([
+                tg.get("first_name") or "",
+                tg.get("last_name") or "",
+            ]).strip()
+            user.nickname = fallback or tg.get("username") or "Learner"
+
         await db.commit()
 
     return user

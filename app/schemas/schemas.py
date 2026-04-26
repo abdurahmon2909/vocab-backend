@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Literal
 
 
@@ -19,6 +19,7 @@ class TelegramUserOut(BaseModel):
     first_name: str | None = None
     last_name: str | None = None
     username: str | None = None
+    nickname: str | None = None
     photo_url: str | None = None
 
 
@@ -35,6 +36,7 @@ class MissionOut(BaseModel):
 
 class UserOut(BaseModel):
     telegram: TelegramUserOut
+    display_name: str
     xp: int
     level: int
     level_progress: int
@@ -42,6 +44,33 @@ class UserOut(BaseModel):
     streak: int
     best_streak: int
     missions: list[MissionOut]
+
+
+class ProfileUpdateIn(BaseModel):
+    nickname: str = Field(min_length=2, max_length=40)
+
+
+class ProfileUpdateOut(BaseModel):
+    nickname: str
+    display_name: str
+
+
+class LeaderboardUserOut(BaseModel):
+    rank: int
+    user_id: int
+    nickname: str
+    username: str | None = None
+    photo_url: str | None = None
+    xp: int
+    level: int
+    badge: str
+    badge_icon: str
+    is_me: bool = False
+
+
+class LeaderboardOut(BaseModel):
+    me: LeaderboardUserOut | None = None
+    top: list[LeaderboardUserOut]
 
 
 class BookOut(BaseModel):

@@ -26,6 +26,7 @@ class User(Base):
     first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    nickname: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
     photo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     language_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
     is_premium: Mapped[bool] = mapped_column(Boolean, default=False)

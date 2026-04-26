@@ -4,8 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_user
 from app.models.models import Book, Collection, Unit, Word
-from app.schemas.schemas import AnswerIn
+from app.schemas.schemas import AnswerIn, NicknameUpdateIn
 from app.services.learning_service import LearningService
+from app.services.leaderboard_service import LeaderboardService
 from app.services.mission_service import MissionService
 from app.services.progress_service import ProgressService
 from app.services.test_service import TestService
@@ -27,6 +28,13 @@ async def get_user(
 
     missions = await MissionService.get_daily_missions(db, user.tg_id)
 
+    display_name = (
+        user.nickname
+        or user.first_name
+        or user.username
+        or "Learner"
+    )
+
     return {
         "telegram": {
             "id": user.tg_id,
@@ -35,6 +43,8 @@ async def get_user(
             "username": user.username,
             "photo_url": user.photo_url,
         },
+        "nickname": user.nickname,
+        "display_name": display_name,
         "xp": xp,
         "level": level,
         "level_progress": XPService.level_progress_percent(xp),
@@ -43,6 +53,44 @@ async def get_user(
         "best_streak": streak_row.best_streak if streak_row else 0,
         "missions": missions,
     }
+
+
+@router.patch("/user/nickname")
+async def update_nickname(
+    data: NicknameUpdateIn,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    nickname = data.nickname.strip()
+
+    if len(nickname) < 2:
+        raise HTTPException(status_code=400, detail="Nickname kamida 2 ta belgidan iborat bo‘lishi kerak")
+
+    if len(nickname) > 32:
+        raise HTTPException(status_code=400, detail="Nickname 32 ta belgidan oshmasligi kerak")
+
+    user.nickname = nickname
+    await db.commit()
+    await db.refresh(user)
+
+    return {
+        "ok": True,
+        "nickname": user.nickname,
+        "display_name": user.nickname or user.first_name or user.username or "Learner",
+    }
+
+
+@router.get("/leaderboard")
+async def get_leaderboard(
+    limit: int = Query(default=50, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    return await LeaderboardService.get_leaderboard(
+        db=db,
+        current_user_id=user.tg_id,
+        limit=limit,
+    )
 
 
 @router.get("/stats")
