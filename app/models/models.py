@@ -34,8 +34,9 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    xp = relationship("UserXP", back_populates="user", uselist=False)
-    streak = relationship("Streak", back_populates="user", uselist=False)
+    # Relationships with lazy="joined" to avoid extra queries
+    xp = relationship("UserXP", back_populates="user", uselist=False, lazy="joined")
+    streak = relationship("Streak", back_populates="user", uselist=False, lazy="joined")
 
 
 class Collection(Base):
@@ -49,7 +50,7 @@ class Collection(Base):
     order_index: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    books = relationship("Book", back_populates="collection")
+    books = relationship("Book", back_populates="collection", lazy="selectin")
 
 
 class Book(Base):
@@ -69,8 +70,8 @@ class Book(Base):
     order_index: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    collection = relationship("Collection", back_populates="books")
-    units = relationship("Unit", back_populates="book", cascade="all, delete-orphan")
+    collection = relationship("Collection", back_populates="books", lazy="selectin")
+    units = relationship("Unit", back_populates="book", cascade="all, delete-orphan", lazy="selectin")
 
 
 class Unit(Base):
@@ -82,10 +83,10 @@ class Unit(Base):
     title: Mapped[str] = mapped_column(String(255))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     order_index: Mapped[int] = mapped_column(Integer, default=0)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)  # 🔥 YANGI QO'SHILDI
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    book = relationship("Book", back_populates="units")
-    words = relationship("Word", back_populates="unit", cascade="all, delete-orphan")
+    book = relationship("Book", back_populates="units", lazy="selectin")
+    words = relationship("Word", back_populates="unit", cascade="all, delete-orphan", lazy="selectin")
 
     __table_args__ = (
         UniqueConstraint("book_id", "unit_number", name="uq_book_unit_number"),
@@ -103,7 +104,7 @@ class Word(Base):
     example: Mapped[str | None] = mapped_column(Text, nullable=True)
     order_index: Mapped[int] = mapped_column(Integer, default=0)
 
-    unit = relationship("Unit", back_populates="words")
+    unit = relationship("Unit", back_populates="words", lazy="selectin")
 
     __table_args__ = (
         UniqueConstraint("unit_id", "english", name="uq_unit_english_word"),
@@ -171,7 +172,7 @@ class UserXP(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.tg_id", ondelete="CASCADE"), primary_key=True)
     total_xp: Mapped[int] = mapped_column(Integer, default=0)
 
-    user = relationship("User", back_populates="xp")
+    user = relationship("User", back_populates="xp", lazy="joined")
 
 
 class XPEvent(Base):
@@ -192,7 +193,7 @@ class Streak(Base):
     best_streak: Mapped[int] = mapped_column(Integer, default=0)
     last_active_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
-    user = relationship("User", back_populates="streak")
+    user = relationship("User", back_populates="streak", lazy="joined")
 
 
 class Mission(Base):

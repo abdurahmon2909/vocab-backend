@@ -18,15 +18,24 @@ router = APIRouter(prefix="/api")
 
 @router.get("/user")
 async def get_user(
-    db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+        user=Depends(get_current_user),
 ):
-    xp_row = user.xp
-    streak_row = user.streak
+    # 🔥 xp va streak ni ishlatishdan oldin tekshirish
+    xp_row = user.xp if hasattr(user, 'xp') else None
+    streak_row = user.streak if hasattr(user, 'streak') else None
+
     xp = xp_row.total_xp if xp_row else 0
     level = XPService.level_from_xp(xp)
+
     missions = await MissionService.get_daily_missions(db, user.tg_id)
-    display_name = user.nickname or user.first_name or user.username or "Learner"
+
+    display_name = (
+            user.nickname
+            or user.first_name
+            or user.username
+            or "Learner"
+    )
 
     return {
         "telegram": {
