@@ -1,7 +1,7 @@
 import json
 
 from fastapi import WebSocket, WebSocketDisconnect
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.db.session import SessionLocal
 from app.models.models import User, UserXP
@@ -35,7 +35,61 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+async def get_user_duel_profile(user_id: int):
+    async with SessionLocal() as db:
+        result = await db.execute(
+            select(User, UserXP.total_xp)
+            .outerjoin(UserXP, UserXP.user_id == User.tg_id)
+            .where(User.tg_id == user_id)
+        )
+        row = result.first()
+
+        if not row:
+            return {
+                "user_id": user_id,
+                "nickname": "Learner",
+                "xp": 0,
+                "rank": None,
+            }
+
+        user, total_xp = row
+        total_xp = int(total_xp or 0)
+
+        rank_result = await db.execute(
+            select(func.count(UserXP.user_id)).where(UserXP.total_xp > total_xp)
+        )
+        better_count = int(rank_result.scalar() or 0)
+
+        return {
+            "user_id": user_id,
+            "nickname": user.nickname or user.first_name or user.username or "Learner",
+            "xp": total_xp,
+            "rank": better_count + 1,
+        }
+
+
+async def enrich_final_data(final_data: dict):
+    if not final_data:
+        return None
+
+    p1_id = final_data["player1_id"]
+    p2_id = final_data["player2_id"]
+
+    p1_profile = await get_user_duel_profile(p1_id)
+    p2_profile = await get_user_duel_profile(p2_id)
+
+    return {
+        **final_data,
+        "profiles": {
+            "player1": p1_profile,
+            "player2": p2_profile,
+        },
+    }
+
+
 async def send_duel_final(final_data: dict):
+    final_data = await enrich_final_data(final_data)
+
     if not final_data:
         return
 
@@ -45,18 +99,26 @@ async def send_duel_final(final_data: dict):
     p1_score = final_data["scores"]["player1"]
     p2_score = final_data["scores"]["player2"]
 
-    p1_xp = final_data["xp"]["player1"]
-    p2_xp = final_data["xp"]["player2"]
+    p1_answered = final_data["answered"]["player1"]
+    p2_answered = final_data["answered"]["player2"]
+
+    p1_xp_gain = final_data["xp"]["player1"]
+    p2_xp_gain = final_data["xp"]["player2"]
+
+    p1_profile = final_data["profiles"]["player1"]
+    p2_profile = final_data["profiles"]["player2"]
 
     await manager.send_personal_message(
         {
             **final_data,
             "my_score": p1_score,
             "opponent_score": p2_score,
-            "my_answered": final_data["answered"]["player1"],
-            "opponent_answered": final_data["answered"]["player2"],
-            "my_xp": p1_xp,
-            "opponent_xp": p2_xp,
+            "my_answered": p1_answered,
+            "opponent_answered": p2_answered,
+            "my_xp": p1_xp_gain,
+            "opponent_xp": p2_xp_gain,
+            "my_profile": p1_profile,
+            "opponent_profile": p2_profile,
         },
         p1_id,
     )
@@ -66,10 +128,12 @@ async def send_duel_final(final_data: dict):
             **final_data,
             "my_score": p2_score,
             "opponent_score": p1_score,
-            "my_answered": final_data["answered"]["player2"],
-            "opponent_answered": final_data["answered"]["player1"],
-            "my_xp": p2_xp,
-            "opponent_xp": p1_xp,
+            "my_answered": p2_answered,
+            "opponent_answered": p1_answered,
+            "my_xp": p2_xp_gain,
+            "opponent_xp": p1_xp_gain,
+            "my_profile": p2_profile,
+            "opponent_profile": p1_profile,
         },
         p2_id,
     )

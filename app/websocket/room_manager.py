@@ -56,6 +56,7 @@ class TeamFightRoom:
 class RoomManager:
     def __init__(self):
         self.duels: Dict[str, DuelRoom] = {}
+        self.finished_duels: Dict[str, dict] = {}
         self.duel_queue: List[Player] = []
         self.team_fights: Dict[str, TeamFightRoom] = {}
         self.team_fight_queue: Dict[str, List[Player]] = {
@@ -142,6 +143,12 @@ class RoomManager:
         question_index: int,
         time_left: float,
     ):
+        if room_id in self.finished_duels:
+            return {
+                "type": "finished",
+                "result": self.finished_duels[room_id],
+            }
+
         room = self.duels.get(room_id)
 
         if not room or room.status != "active" or not room.player2:
@@ -195,6 +202,12 @@ class RoomManager:
         return self._progress_payload(room_id, player, opponent)
 
     async def mark_player_finished(self, room_id: str, user_id: int):
+        if room_id in self.finished_duels:
+            return {
+                "type": "finished",
+                "result": self.finished_duels[room_id],
+            }
+
         room = self.duels.get(room_id)
 
         if not room or room.status != "active" or not room.player2:
@@ -217,13 +230,16 @@ class RoomManager:
         return self._progress_payload(room_id, player, opponent)
 
     async def finish_duel(self, room_id: str):
+        if room_id in self.finished_duels:
+            return self.finished_duels[room_id]
+
         room = self.duels.get(room_id)
 
         if not room:
-            return None
+            return self.finished_duels.get(room_id)
 
         if room.final_sent:
-            return None
+            return self.finished_duels.get(room_id)
 
         room.final_sent = True
         room.status = "finished"
@@ -272,6 +288,7 @@ class RoomManager:
             },
         }
 
+        self.finished_duels[room_id] = result
         self.duels.pop(room_id, None)
 
         return result
