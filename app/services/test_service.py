@@ -9,7 +9,7 @@ class TestService:
     @staticmethod
     async def build_unit_questions(db: AsyncSession, unit_id: int, limit: int = 20):
         words_result = await db.execute(
-            select(Word).where(Word.unit_id == unit_id).order_by(Word.order_index, Word.id)
+            select(Word).where(Word.unit_id == unit_id)
         )
         words = words_result.scalars().all()
 
@@ -42,9 +42,10 @@ class TestService:
         if not words:
             return []
 
-        selected = words[:]
-        random.shuffle(selected)
-        selected = selected[:limit]
+        # 🔥 TO‘LIQ RANDOM
+        random.shuffle(words)
+
+        selected = words[:limit]
 
         output = []
 
@@ -67,6 +68,7 @@ class TestService:
             ]
 
             random.shuffle(distractors)
+
             options = [correct] + distractors[:3]
             random.shuffle(options)
 
