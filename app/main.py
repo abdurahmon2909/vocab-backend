@@ -21,7 +21,7 @@ app.add_middleware(
 )
 
 # Include API routes
-app.include_router(router)
+app.include_router(ws_router)
 
 # Include WebSocket routes
 app.include_router(ws_router)

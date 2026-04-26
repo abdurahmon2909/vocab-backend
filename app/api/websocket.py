@@ -1,4 +1,3 @@
-# app/api/websocket.py
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.websocket.handlers import handle_websocket
 
@@ -7,31 +6,28 @@ router = APIRouter()
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """
-    WebSocket endpoint for real-time features:
-    - Duel (1v1)
-    - Team Fight (team battle)
-    """
+    print("🔌 New WebSocket connection request")
     try:
-        # Get user_id from query parameter
         user_id = websocket.query_params.get("user_id")
+        print(f"User ID from query: {user_id}")
 
         if not user_id:
+            print("❌ No user_id provided")
             await websocket.close(code=1008, reason="Missing user_id")
             return
 
-        # Validate user_id is integer
         try:
             user_id_int = int(user_id)
+            print(f"✅ Valid user_id: {user_id_int}")
         except ValueError:
+            print(f"❌ Invalid user_id: {user_id}")
             await websocket.close(code=1008, reason="Invalid user_id")
             return
 
-        # Handle WebSocket connection
         await handle_websocket(websocket, user_id_int)
 
     except WebSocketDisconnect:
-        pass
+        print("WebSocket disconnected")
     except Exception as e:
         print(f"WebSocket error: {e}")
         try:
