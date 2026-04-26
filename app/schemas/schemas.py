@@ -145,3 +145,10 @@ class StatsOut(BaseModel):
     total_wrong: int
     weak_words_count: int
     mastered_words_count: int
+
+class ProfileUpdateOut(BaseModel):
+    nickname: str
+    display_name: str
+
+
+NicknameUpdateIn = ProfileUpdateIn
