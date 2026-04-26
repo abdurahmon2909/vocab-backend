@@ -289,6 +289,14 @@ async def save_mode_best_progress(
         correct_answers=correct_answers,
     )
 
+    mission_updates = await MissionService.mark_unit_completed_if_needed(
+        db=db,
+        user_id=user.tg_id,
+        unit_id=unit_id,
+    )
+
+    await db.commit()
+
     return {
         "ok": True,
         "mode": progress.mode,
@@ -297,6 +305,12 @@ async def save_mode_best_progress(
         "correct_answers": progress.correct_answers,
         "progress_percent": progress.progress_percent,
         "is_completed": progress.is_completed,
+        "unit_completed": await MissionService.is_unit_completed_by_modes(
+            db=db,
+            user_id=user.tg_id,
+            unit_id=unit_id,
+        ),
+        "mission_updates": mission_updates,
     }
 
 @router.get("/tts")

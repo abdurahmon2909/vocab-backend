@@ -139,6 +139,19 @@ class TestQuestionOut(BaseModel):
     options: list[str]
     correct_answer: str
 
+class BookOut(BaseModel):
+    id: int
+    collection_id: int
+    slug: str
+    title: str
+    description: str | None = None
+
+    # 🔥 MUHIM
+    cover_url: str | None = None
+
+    total_units: int
+    completed_units: int
+    progress_percent: int
 
 class StatsOut(BaseModel):
     total_seen: int
