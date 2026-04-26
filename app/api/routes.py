@@ -264,8 +264,35 @@ async def answer(
         correct_answer=data.correct_answer,
     )
 
+@router.post("/mode-progress/best")
+async def save_mode_best_progress(
+        data: dict,
+        db: AsyncSession = Depends(get_db),
+        user=Depends(get_current_user),
+):
+    unit_id = int(data.get("unit_id"))
+    mode = str(data.get("mode"))
+    total_questions = int(data.get("total_questions", 0))
+    correct_answers = int(data.get("correct_answers", 0))
 
-# 🔥 TEST endpoint - hech qanday autorization talab qilmaydi
-@router.get("/test")
-async def test_endpoint():
-    return {"message": "API is working!"}
+    if mode not in ["test", "writing", "listening", "weak_test", "weak_writing"]:
+        raise HTTPException(status_code=400, detail="Invalid mode")
+
+    progress = await LearningService.update_mode_best_progress(
+        db=db,
+        user_id=user.tg_id,
+        unit_id=unit_id,
+        mode=mode,
+        total_questions=total_questions,
+        correct_answers=correct_answers,
+    )
+
+    return {
+        "ok": True,
+        "mode": progress.mode,
+        "unit_id": progress.unit_id,
+        "total_questions": progress.total_questions,
+        "correct_answers": progress.correct_answers,
+        "progress_percent": progress.progress_percent,
+        "is_completed": progress.is_completed,
+    }

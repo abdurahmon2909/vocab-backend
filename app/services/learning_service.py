@@ -31,52 +31,59 @@ class LearningService:
         if mode == "test":
             return 10
 
+        if mode == "duel_test":
+            return 10
+
         return 8
 
     @staticmethod
-    async def update_mode_progress(
+    async def update_mode_best_progress(
         db: AsyncSession,
         user_id: int,
         unit_id: int,
         mode: str,
-        is_correct: bool,
+        total_questions: int,
+        correct_answers: int,
     ) -> ModeProgress:
-        progress_result = await db.execute(
+        if total_questions <= 0:
+            attempt_percent = 0
+        else:
+            attempt_percent = int((correct_answers / total_questions) * 100)
+
+        result = await db.execute(
             select(ModeProgress).where(
                 ModeProgress.user_id == user_id,
                 ModeProgress.unit_id == unit_id,
                 ModeProgress.mode == mode,
             )
         )
-        progress = progress_result.scalar_one_or_none()
+        progress = result.scalar_one_or_none()
 
         if not progress:
             progress = ModeProgress(
                 user_id=user_id,
                 unit_id=unit_id,
                 mode=mode,
-                total_questions=0,
-                correct_answers=0,
-                progress_percent=0,
-                is_completed=False,
+                total_questions=total_questions,
+                correct_answers=correct_answers,
+                progress_percent=attempt_percent,
+                is_completed=attempt_percent >= 80,
             )
             db.add(progress)
-            await db.flush()
+            await db.commit()
+            await db.refresh(progress)
+            return progress
 
-        progress.total_questions += 1
+        old_percent = int(progress.progress_percent or 0)
 
-        if is_correct:
-            progress.correct_answers += 1
+        if attempt_percent > old_percent:
+            progress.total_questions = total_questions
+            progress.correct_answers = correct_answers
+            progress.progress_percent = attempt_percent
+            progress.is_completed = attempt_percent >= 80
 
-        if progress.total_questions <= 0:
-            progress.progress_percent = 0
-        else:
-            progress.progress_percent = int(
-                (progress.correct_answers / progress.total_questions) * 100
-            )
-
-        progress.is_completed = progress.progress_percent >= 80
-
+        await db.commit()
+        await db.refresh(progress)
         return progress
 
     @staticmethod
@@ -119,14 +126,8 @@ class LearningService:
             progress.wrong_count += 1
             progress.last_result = "wrong"
 
-        progress.mastery_score = int((progress.correct_count / progress.seen_count) * 100)
-
-        mode_progress = await LearningService.update_mode_progress(
-            db=db,
-            user_id=user_id,
-            unit_id=unit_id,
-            mode=mode,
-            is_correct=is_correct,
+        progress.mastery_score = int(
+            (progress.correct_count / progress.seen_count) * 100
         )
 
         xp_gain = LearningService.xp_for_answer(is_correct, mode)
@@ -139,21 +140,25 @@ class LearningService:
 
         xp_row.total_xp += xp_gain
 
-        db.add(XPEvent(
-            user_id=user_id,
-            amount=xp_gain,
-            reason=f"answer:{mode}",
-        ))
+        db.add(
+            XPEvent(
+                user_id=user_id,
+                amount=xp_gain,
+                reason=f"answer:{mode}",
+            )
+        )
 
-        db.add(Answer(
-            user_id=user_id,
-            word_id=word_id,
-            unit_id=unit_id,
-            mode=mode,
-            is_correct=is_correct,
-            user_answer=user_answer,
-            correct_answer=correct_answer,
-        ))
+        db.add(
+            Answer(
+                user_id=user_id,
+                word_id=word_id,
+                unit_id=unit_id,
+                mode=mode,
+                is_correct=is_correct,
+                user_answer=user_answer,
+                correct_answer=correct_answer,
+            )
+        )
 
         streak = await StreakService.update(db, user_id)
 
@@ -180,13 +185,6 @@ class LearningService:
             "level_progress": XPService.level_progress_percent(total_xp),
             "next_level_xp": XPService.next_level_xp(level),
             "mastery_score": progress.mastery_score,
-            "mode_progress": {
-                "mode": mode_progress.mode,
-                "total_questions": mode_progress.total_questions,
-                "correct_answers": mode_progress.correct_answers,
-                "progress_percent": mode_progress.progress_percent,
-                "is_completed": mode_progress.is_completed,
-            },
             "streak": streak.streak,
             "mission_updates": mission_updates,
         }
