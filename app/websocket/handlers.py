@@ -6,7 +6,7 @@ from app.models.models import User, UserXP
 from app.services.test_service import TestService
 from app.services.learning_service import LearningService
 from app.websocket.room_manager import room_manager, Player
-
+from sqlalchemy import select
 
 class ConnectionManager:
     def __init__(self):
