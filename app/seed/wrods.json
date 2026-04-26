@@ -1,0 +1,47 @@
+[
+  {
+    "slug": "essential-4000-book-1",
+    "title": "Essential 4000 English Words 1",
+    "description": "Boshlang‘ich va o‘rta daraja uchun muhim inglizcha so‘zlar.",
+    "cover_url": "",
+    "units": [
+      {
+        "unit_number": 1,
+        "title": "Unit 1",
+        "description": "Basic vocabulary",
+        "words": [
+          {
+            "english": "afraid",
+            "uzbek": "qo‘rqgan",
+            "definition": "feeling fear",
+            "example": "She was afraid of the dark."
+          },
+          {
+            "english": "agree",
+            "uzbek": "rozi bo‘lmoq",
+            "definition": "to have the same opinion",
+            "example": "I agree with your idea."
+          },
+          {
+            "english": "angry",
+            "uzbek": "jahli chiqqan",
+            "definition": "having a strong feeling against someone or something",
+            "example": "He was angry after the mistake."
+          },
+          {
+            "english": "arrive",
+            "uzbek": "yetib kelmoq",
+            "definition": "to reach a place",
+            "example": "They arrive at school early."
+          },
+          {
+            "english": "attack",
+            "uzbek": "hujum qilmoq",
+            "definition": "to try to hurt someone or something",
+            "example": "The dog did not attack anyone."
+          }
+        ]
+      }
+    ]
+  }
+]
