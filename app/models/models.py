@@ -238,14 +238,3 @@ class Answer(Base):
     correct_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-class Book(Base):
-    __tablename__ = "books"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    collection_id: Mapped[int]
-    slug: Mapped[str]
-    title: Mapped[str]
-    description: Mapped[str | None]
-
-    # 🔥 MUHIM
-    cover_url: Mapped[str | None] = mapped_column(String, nullable=True)
