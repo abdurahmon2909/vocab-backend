@@ -128,3 +128,13 @@ class TestService:
 
         questions = TestService._build_questions([word], 1)
         return questions[0] if questions else None
+
+    @staticmethod
+    async def build_random_questions(db: AsyncSession, limit: int = 20):
+        """Random questions for duel/team fight"""
+        from sqlalchemy import func
+        words_result = await db.execute(
+            select(Word).order_by(func.random()).limit(limit)
+        )
+        words = words_result.scalars().all()
+        return TestService._build_questions(words, limit)
