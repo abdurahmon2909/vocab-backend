@@ -475,6 +475,7 @@ class RoomManager:
 
         result = {
             "event": "duel_finished",
+            "room_id": room_id,
             "winner": room.winner,
             "finish_reason": room.finish_reason,
             "player1_id": p1.user_id,
