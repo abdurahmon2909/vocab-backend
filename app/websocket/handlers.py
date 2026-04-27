@@ -5,9 +5,10 @@ from sqlalchemy import func, select
 
 from app.db.session import SessionLocal
 from app.models.models import User, UserXP
-from app.services.test_service import TestService
 from app.services.learning_service import LearningService
-from app.websocket.room_manager import room_manager, Player
+from app.services.test_service import TestService
+from app.services.xp_service import XPService
+from app.websocket.room_manager import Player, room_manager
 
 
 class ConnectionManager:
@@ -49,7 +50,9 @@ async def get_user_duel_profile(user_id: int):
                 "user_id": user_id,
                 "nickname": "Learner",
                 "xp": 0,
+                "level": 0,
                 "rank": None,
+                "photo_url": None,
             }
 
         user, total_xp = row
@@ -64,7 +67,9 @@ async def get_user_duel_profile(user_id: int):
             "user_id": user_id,
             "nickname": user.nickname or user.first_name or user.username or "Learner",
             "xp": total_xp,
+            "level": XPService.level_from_xp(total_xp),
             "rank": better_count + 1,
+            "photo_url": user.photo_url,
         }
 
 
@@ -85,6 +90,10 @@ async def enrich_final_data(final_data: dict):
             "player2": p2_profile,
         },
     }
+
+
+def _player_flag(final_data: dict, key: str, player_key: str) -> bool:
+    return bool((final_data.get(key) or {}).get(player_key))
 
 
 async def send_duel_final(final_data: dict):
@@ -119,6 +128,10 @@ async def send_duel_final(final_data: dict):
             "opponent_xp": p2_xp_gain,
             "my_profile": p1_profile,
             "opponent_profile": p2_profile,
+            "my_surrendered": _player_flag(final_data, "surrendered", "player1"),
+            "opponent_surrendered": _player_flag(final_data, "surrendered", "player2"),
+            "my_left": _player_flag(final_data, "forfeited", "player1"),
+            "opponent_left": _player_flag(final_data, "forfeited", "player2"),
         },
         p1_id,
     )
@@ -134,8 +147,62 @@ async def send_duel_final(final_data: dict):
             "opponent_xp": p1_xp_gain,
             "my_profile": p2_profile,
             "opponent_profile": p1_profile,
+            "my_surrendered": _player_flag(final_data, "surrendered", "player2"),
+            "opponent_surrendered": _player_flag(final_data, "surrendered", "player1"),
+            "my_left": _player_flag(final_data, "forfeited", "player2"),
+            "opponent_left": _player_flag(final_data, "forfeited", "player1"),
         },
         p2_id,
+    )
+
+
+async def start_duel_room(room_id: str):
+    async with SessionLocal() as db:
+        questions = await TestService.build_random_questions(db, limit=20)
+        await room_manager.set_duel_questions(room_id, questions)
+
+    room = room_manager.duels.get(room_id)
+
+    if not room or not room.player2:
+        return
+
+    p1 = room.player1
+    p2 = room.player2
+
+    await manager.send_personal_message(
+        {
+            "event": "duel_started",
+            "room_id": room_id,
+            "questions": questions,
+            "total_questions": room.total_questions,
+            "time_per_question": room.time_per_question,
+            "my_profile": room_manager.player_to_dict(p1),
+            "opponent_profile": room_manager.player_to_dict(p2),
+        },
+        p1.user_id,
+    )
+
+    await manager.send_personal_message(
+        {
+            "event": "duel_started",
+            "room_id": room_id,
+            "questions": questions,
+            "total_questions": room.total_questions,
+            "time_per_question": room.time_per_question,
+            "my_profile": room_manager.player_to_dict(p2),
+            "opponent_profile": room_manager.player_to_dict(p1),
+        },
+        p2.user_id,
+    )
+
+
+async def send_online_users(user_id: int):
+    await manager.send_personal_message(
+        {
+            "event": "online_users",
+            "users": room_manager.get_online_duel_users(user_id),
+        },
+        user_id,
     )
 
 
@@ -155,14 +222,18 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
             return
 
         user, xp = row
+        xp = int(xp or 0)
 
         player = Player(
             user_id=user_id,
-            nickname=user.nickname or user.first_name or "Learner",
-            xp=xp or 0,
-            level=0,
+            nickname=user.nickname or user.first_name or user.username or "Learner",
+            xp=xp,
+            level=XPService.level_from_xp(xp),
             socket_id=str(user_id),
+            photo_url=user.photo_url,
         )
+
+    room_manager.add_online_user(player)
 
     try:
         while True:
@@ -172,28 +243,100 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
 
             print(f"📩 Received: {event} from {user_id}")
 
-            if event == "join_duel":
+            if event == "get_online_users":
+                await send_online_users(user_id)
+
+            elif event == "duel_invite":
+                target_id = message.get("target_id")
+
+                try:
+                    target_id = int(target_id)
+                except (TypeError, ValueError):
+                    await manager.send_personal_message(
+                        {"event": "duel_invite_error", "reason": "invalid_target"},
+                        user_id,
+                    )
+                    continue
+
+                invite_result = room_manager.create_duel_invite(user_id, target_id)
+
+                if not invite_result.get("ok"):
+                    reason = invite_result.get("reason")
+                    await manager.send_personal_message(
+                        {"event": "duel_invite_error", "reason": reason},
+                        user_id,
+                    )
+                    await send_online_users(user_id)
+                    continue
+
+                await manager.send_personal_message(
+                    {
+                        "event": "duel_invite_sent",
+                        "target_user": room_manager.player_to_dict(invite_result["target_player"]),
+                    },
+                    user_id,
+                )
+
+                await manager.send_personal_message(
+                    {
+                        "event": "duel_invite",
+                        "from_user": room_manager.player_to_dict(invite_result["from_player"]),
+                    },
+                    target_id,
+                )
+
+            elif event == "duel_reject":
+                from_user_id = message.get("from_user_id")
+
+                try:
+                    from_user_id = int(from_user_id) if from_user_id is not None else None
+                except (TypeError, ValueError):
+                    from_user_id = None
+
+                rejected_from_user_id = room_manager.reject_duel_invite(user_id, from_user_id)
+
+                if rejected_from_user_id:
+                    await manager.send_personal_message(
+                        {
+                            "event": "duel_invite_rejected",
+                            "target_user_id": user_id,
+                        },
+                        rejected_from_user_id,
+                    )
+
+            elif event == "duel_accept":
+                from_user_id = message.get("from_user_id")
+
+                try:
+                    from_user_id = int(from_user_id)
+                except (TypeError, ValueError):
+                    await manager.send_personal_message(
+                        {"event": "duel_invite_error", "reason": "invalid_sender"},
+                        user_id,
+                    )
+                    continue
+
+                accept_result = await room_manager.accept_duel_invite(user_id, from_user_id)
+
+                if not accept_result.get("ok"):
+                    reason = accept_result.get("reason")
+                    await manager.send_personal_message(
+                        {"event": "duel_invite_error", "reason": reason},
+                        user_id,
+                    )
+                    await manager.send_personal_message(
+                        {"event": "duel_invite_error", "reason": reason},
+                        from_user_id,
+                    )
+                    continue
+
+                await start_duel_room(accept_result["room_id"])
+
+            elif event == "join_duel":
                 room_id = await room_manager.join_duel_queue(player)
 
                 if room_id:
-                    async with SessionLocal() as db:
-                        questions = await TestService.build_random_questions(db, limit=20)
-                        await room_manager.set_duel_questions(room_id, questions)
-
-                    room = room_manager.duels.get(room_id)
-
-                    if room:
-                        for p in [room.player1, room.player2]:
-                            await manager.send_personal_message(
-                                {
-                                    "event": "duel_started",
-                                    "room_id": room_id,
-                                    "questions": questions,
-                                    "total_questions": 20,
-                                    "time_per_question": 10,
-                                },
-                                p.user_id,
-                            )
+                    await start_duel_room(room_id)
                 else:
                     await manager.send_personal_message(
                         {
@@ -264,6 +407,9 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
                                     "opponent_finished": result["opponent_finished"],
                                     "my_xp": result["player_xp"],
                                     "opponent_xp": result["opponent_xp"],
+                                    "opponent_profile": result.get("opponent_profile"),
+                                    "opponent_left": result.get("opponent_left", False),
+                                    "opponent_surrendered": result.get("opponent_surrendered", False),
                                 },
                                 player_id,
                             )
@@ -278,9 +424,61 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
                                     "opponent_finished": result["player_finished"],
                                     "my_xp": result["opponent_xp"],
                                     "opponent_xp": result["player_xp"],
+                                    "opponent_left": False,
+                                    "opponent_surrendered": False,
                                 },
                                 opponent_id,
                             )
+
+                elif room_type == "team":
+                    if word_id and unit_id:
+                        try:
+                            async with SessionLocal() as db:
+                                res = await LearningService.process_answer(
+                                    db=db,
+                                    user_id=user_id,
+                                    word_id=int(word_id),
+                                    unit_id=int(unit_id),
+                                    mode=mode,
+                                    is_correct=is_correct,
+                                    user_answer=answer,
+                                    correct_answer=correct_answer,
+                                )
+                                saved_xp = int(res.get("xp_gain", 0))
+                        except Exception as e:
+                            print(f"❌ Team XP save error: {e}")
+
+                    result = await room_manager.submit_team_answer(
+                        room_id=room_id,
+                        user_id=user_id,
+                        answer=answer,
+                        is_correct=is_correct,
+                        xp_gain=saved_xp,
+                    )
+
+                    if result:
+                        room = room_manager.team_fights.get(room_id)
+                        recipients = []
+
+                        if room:
+                            recipients = room.team_a + room.team_b
+
+                        if result.get("event") == "team_fight_finished":
+                            recipients = []
+                            for connection_user_id in manager.active_connections.keys():
+                                try:
+                                    recipients.append(Player(
+                                        user_id=int(connection_user_id),
+                                        nickname="",
+                                        xp=0,
+                                        level=0,
+                                        socket_id=str(connection_user_id),
+                                    ))
+                                except ValueError:
+                                    pass
+
+                        for p in recipients:
+                            await manager.send_personal_message(result, p.user_id)
 
             elif event == "finish_duel":
                 room_id = message.get("room_id")
@@ -304,6 +502,8 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
                                 "opponent_finished": result["opponent_finished"],
                                 "my_xp": result["player_xp"],
                                 "opponent_xp": result["opponent_xp"],
+                                "opponent_left": result.get("opponent_left", False),
+                                "opponent_surrendered": result.get("opponent_surrendered", False),
                             },
                             player_id,
                         )
@@ -321,6 +521,13 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
                             },
                             opponent_id,
                         )
+
+            elif event == "duel_surrender":
+                room_id = message.get("room_id")
+                result = await room_manager.surrender_duel(room_id, user_id)
+
+                if result and result.get("type") == "finished":
+                    await send_duel_final(result["result"])
 
             elif event == "join_team":
                 team = message.get("team")
@@ -382,6 +589,26 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
                 )
 
     except WebSocketDisconnect:
+        print(f"WebSocketDisconnect: {user_id}")
+
+    finally:
         manager.disconnect(user_id)
         await room_manager.leave_duel_queue(user_id)
         await room_manager.leave_team_queue(user_id)
+        room_manager.remove_online_user(user_id)
+
+        disconnect_result = await room_manager.handle_disconnect(user_id)
+
+        if disconnect_result:
+            if disconnect_result.get("type") == "finished":
+                await send_duel_final(disconnect_result["result"])
+            elif disconnect_result.get("type") == "opponent_left":
+                await manager.send_personal_message(
+                    {
+                        "event": "opponent_left",
+                        "room_id": disconnect_result["room_id"],
+                        "left_user_id": disconnect_result["left_user_id"],
+                        "opponent_left": True,
+                    },
+                    disconnect_result["opponent_id"],
+                )

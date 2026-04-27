@@ -12,12 +12,17 @@ class Player:
     xp: int
     level: int
     socket_id: str
+    photo_url: str | None = None
     is_ready: bool = False
     score: int = 0
     xp_gain: int = 0
     current_word: dict | None = None
     answers: List[dict] = field(default_factory=list)
     finished_at: datetime | None = None
+    is_connected: bool = True
+    left_at: datetime | None = None
+    surrendered: bool = False
+    forfeited: bool = False
 
 
 @dataclass
@@ -34,6 +39,7 @@ class DuelRoom:
     winner: int | None = None
     questions: List[dict] = field(default_factory=list)
     final_sent: bool = False
+    finish_reason: str | None = None
 
 
 @dataclass
@@ -58,13 +64,127 @@ class RoomManager:
         self.duels: Dict[str, DuelRoom] = {}
         self.finished_duels: Dict[str, dict] = {}
         self.duel_queue: List[Player] = []
+        self.online_users: Dict[int, Player] = {}
+        self.duel_invites: Dict[int, int] = {}
         self.team_fights: Dict[str, TeamFightRoom] = {}
         self.team_fight_queue: Dict[str, List[Player]] = {
             "team_a": [],
             "team_b": [],
         }
 
+    def add_online_user(self, player: Player):
+        player.is_connected = True
+        player.left_at = None
+        self.online_users[player.user_id] = player
+
+    def remove_online_user(self, user_id: int):
+        self.online_users.pop(user_id, None)
+        self.duel_invites.pop(user_id, None)
+        for target_id, from_user_id in list(self.duel_invites.items()):
+            if from_user_id == user_id:
+                self.duel_invites.pop(target_id, None)
+
+    def player_to_dict(self, player: Player | None):
+        if not player:
+            return None
+
+        return {
+            "user_id": player.user_id,
+            "nickname": player.nickname,
+            "xp": player.xp,
+            "level": player.level,
+            "photo_url": player.photo_url,
+            "score": player.score,
+            "answered": len(player.answers),
+            "finished": bool(player.finished_at),
+            "is_connected": player.is_connected,
+            "surrendered": player.surrendered,
+            "forfeited": player.forfeited,
+        }
+
+    def is_user_in_active_duel(self, user_id: int) -> bool:
+        for room in self.duels.values():
+            if room.status != "active":
+                continue
+
+            if room.player1 and room.player1.user_id == user_id:
+                return True
+
+            if room.player2 and room.player2.user_id == user_id:
+                return True
+
+        return False
+
+    def get_online_duel_users(self, current_user_id: int):
+        users = []
+
+        for player in self.online_users.values():
+            if player.user_id == current_user_id:
+                continue
+
+            users.append({
+                **self.player_to_dict(player),
+                "busy": self.is_user_in_active_duel(player.user_id),
+            })
+
+        users.sort(key=lambda x: (x.get("busy", False), -(x.get("xp") or 0)))
+        return users
+
+    def create_duel_invite(self, from_user_id: int, target_user_id: int) -> dict:
+        if from_user_id == target_user_id:
+            return {"ok": False, "reason": "self_invite"}
+
+        from_player = self.online_users.get(from_user_id)
+        target_player = self.online_users.get(target_user_id)
+
+        if not from_player:
+            return {"ok": False, "reason": "sender_offline"}
+
+        if not target_player:
+            return {"ok": False, "reason": "target_offline"}
+
+        if self.is_user_in_active_duel(from_user_id):
+            return {"ok": False, "reason": "sender_busy"}
+
+        if self.is_user_in_active_duel(target_user_id):
+            return {"ok": False, "reason": "target_busy"}
+
+        self.duel_invites[target_user_id] = from_user_id
+        return {"ok": True, "from_player": from_player, "target_player": target_player}
+
+    def reject_duel_invite(self, user_id: int, from_user_id: int | None = None):
+        current_from_user_id = self.duel_invites.get(user_id)
+
+        if from_user_id is None or current_from_user_id == from_user_id:
+            self.duel_invites.pop(user_id, None)
+            return current_from_user_id
+
+        return None
+
+    async def accept_duel_invite(self, user_id: int, from_user_id: int) -> dict:
+        current_from_user_id = self.duel_invites.get(user_id)
+
+        if current_from_user_id != from_user_id:
+            return {"ok": False, "reason": "invite_expired"}
+
+        player1 = self.online_users.get(from_user_id)
+        player2 = self.online_users.get(user_id)
+
+        if not player1 or not player2:
+            return {"ok": False, "reason": "user_offline"}
+
+        if self.is_user_in_active_duel(from_user_id) or self.is_user_in_active_duel(user_id):
+            return {"ok": False, "reason": "user_busy"}
+
+        self.duel_invites.pop(user_id, None)
+        room_id = await self.create_duel_room(player1, player2)
+
+        return {"ok": True, "room_id": room_id}
+
     async def join_duel_queue(self, player: Player) -> str | None:
+        if self.is_user_in_active_duel(player.user_id):
+            return None
+
         for p in self.duel_queue:
             if p.user_id == player.user_id:
                 return None
@@ -87,6 +207,13 @@ class RoomManager:
             p.xp_gain = 0
             p.answers = []
             p.finished_at = None
+            p.surrendered = False
+            p.forfeited = False
+            p.is_connected = True
+            p.left_at = None
+
+        await self.leave_duel_queue(player1.user_id)
+        await self.leave_duel_queue(player2.user_id)
 
         room = DuelRoom(
             room_id=room_id,
@@ -113,9 +240,13 @@ class RoomManager:
                 room.current_word = room.questions[0]
 
     def _get_duel_players(self, room: DuelRoom, user_id: int):
-        player = room.player1 if room.player1.user_id == user_id else room.player2
-        opponent = room.player2 if room.player1.user_id == user_id else room.player1
-        return player, opponent
+        if room.player1 and room.player1.user_id == user_id:
+            return room.player1, room.player2
+
+        if room.player2 and room.player2.user_id == user_id:
+            return room.player2, room.player1
+
+        return None, None
 
     def _progress_payload(self, room_id: str, player: Player, opponent: Player):
         return {
@@ -131,6 +262,9 @@ class RoomManager:
             "opponent_finished": bool(opponent.finished_at),
             "player_xp": player.xp_gain,
             "opponent_xp": opponent.xp_gain,
+            "opponent_profile": self.player_to_dict(opponent),
+            "opponent_left": opponent.forfeited,
+            "opponent_surrendered": opponent.surrendered,
         }
 
     async def submit_duel_answer(
@@ -156,7 +290,7 @@ class RoomManager:
 
         player, opponent = self._get_duel_players(room, user_id)
 
-        if not player or player.finished_at:
+        if not player or not opponent or player.finished_at or player.surrendered or player.forfeited:
             return None
 
         already_answered = any(
@@ -193,6 +327,12 @@ class RoomManager:
         if is_player_finished:
             player.finished_at = datetime.now()
 
+        if opponent.forfeited or opponent.surrendered:
+            return {
+                "type": "finished",
+                "result": await self.finish_duel(room_id),
+            }
+
         if room.player1.finished_at and room.player2.finished_at:
             return {
                 "type": "finished",
@@ -215,11 +355,17 @@ class RoomManager:
 
         player, opponent = self._get_duel_players(room, user_id)
 
-        if not player:
+        if not player or not opponent:
             return None
 
         if not player.finished_at:
             player.finished_at = datetime.now()
+
+        if opponent.forfeited or opponent.surrendered:
+            return {
+                "type": "finished",
+                "result": await self.finish_duel(room_id),
+            }
 
         if room.player1.finished_at and room.player2.finished_at:
             return {
@@ -228,6 +374,67 @@ class RoomManager:
             }
 
         return self._progress_payload(room_id, player, opponent)
+
+    async def surrender_duel(self, room_id: str, user_id: int):
+        if room_id in self.finished_duels:
+            return {
+                "type": "finished",
+                "result": self.finished_duels[room_id],
+            }
+
+        room = self.duels.get(room_id)
+
+        if not room or room.status != "active" or not room.player2:
+            return None
+
+        player, opponent = self._get_duel_players(room, user_id)
+
+        if not player or not opponent:
+            return None
+
+        player.surrendered = True
+        player.finished_at = datetime.now()
+        room.winner = opponent.user_id
+        room.finish_reason = "surrender"
+
+        return {
+            "type": "finished",
+            "result": await self.finish_duel(room_id),
+        }
+
+    async def handle_disconnect(self, user_id: int):
+        for room_id, room in list(self.duels.items()):
+            if room.status != "active" or not room.player2:
+                continue
+
+            player, opponent = self._get_duel_players(room, user_id)
+
+            if not player or not opponent:
+                continue
+
+            player.is_connected = False
+            player.left_at = datetime.now()
+            player.forfeited = True
+            player.finished_at = datetime.now()
+            room.winner = opponent.user_id
+            room.finish_reason = "opponent_left"
+
+            if opponent.finished_at:
+                return {
+                    "type": "finished",
+                    "result": await self.finish_duel(room_id),
+                    "opponent_id": opponent.user_id,
+                }
+
+            return {
+                "type": "opponent_left",
+                "room_id": room_id,
+                "left_user_id": user_id,
+                "opponent_id": opponent.user_id,
+                "opponent_profile": self.player_to_dict(player),
+            }
+
+        return None
 
     async def finish_duel(self, room_id: str):
         if room_id in self.finished_duels:
@@ -253,21 +460,23 @@ class RoomManager:
         if not p2.finished_at:
             p2.finished_at = datetime.now()
 
-        if p1.score > p2.score:
-            room.winner = p1.user_id
-        elif p2.score > p1.score:
-            room.winner = p2.user_id
-        else:
-            if p1.finished_at < p2.finished_at:
+        if room.winner is None:
+            if p1.score > p2.score:
                 room.winner = p1.user_id
-            elif p2.finished_at < p1.finished_at:
+            elif p2.score > p1.score:
                 room.winner = p2.user_id
             else:
-                room.winner = None
+                if p1.finished_at < p2.finished_at:
+                    room.winner = p1.user_id
+                elif p2.finished_at < p1.finished_at:
+                    room.winner = p2.user_id
+                else:
+                    room.winner = None
 
         result = {
             "event": "duel_finished",
             "winner": room.winner,
+            "finish_reason": room.finish_reason,
             "player1_id": p1.user_id,
             "player2_id": p2.user_id,
             "scores": {
@@ -281,6 +490,14 @@ class RoomManager:
             "xp": {
                 "player1": p1.xp_gain,
                 "player2": p2.xp_gain,
+            },
+            "surrendered": {
+                "player1": p1.surrendered,
+                "player2": p2.surrendered,
+            },
+            "forfeited": {
+                "player1": p1.forfeited,
+                "player2": p2.forfeited,
             },
             "finished_at": {
                 "player1": p1.finished_at.isoformat() if p1.finished_at else None,
