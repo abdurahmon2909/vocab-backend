@@ -181,6 +181,40 @@ class RoomManager:
 
         return {"ok": True, "room_id": room_id}
 
+
+    async def accept_duel_link(self, user_id: int, from_user_id: int) -> dict:
+        """Accept a Telegram deep-link duel invite without requiring a live pending invite.
+
+        Flow:
+        - User A sends Telegram invite to User B.
+        - User B opens Mini App with ?tab=duel&invite_from=A_TG_ID.
+        - Frontend sends duel_accept_link.
+        - If both users are online and free, create a private duel room immediately.
+        """
+        if user_id == from_user_id:
+            return {"ok": False, "reason": "self_invite"}
+
+        player1 = self.online_users.get(from_user_id)
+        player2 = self.online_users.get(user_id)
+
+        if not player1:
+            return {"ok": False, "reason": "sender_offline"}
+
+        if not player2:
+            return {"ok": False, "reason": "user_offline"}
+
+        if self.is_user_in_active_duel(from_user_id):
+            return {"ok": False, "reason": "sender_busy"}
+
+        if self.is_user_in_active_duel(user_id):
+            return {"ok": False, "reason": "user_busy"}
+
+        if self.duel_invites.get(user_id) == from_user_id:
+            self.duel_invites.pop(user_id, None)
+
+        room_id = await self.create_duel_room(player1, player2)
+        return {"ok": True, "room_id": room_id}
+
     async def join_duel_queue(self, player: Player) -> str | None:
         if self.is_user_in_active_duel(player.user_id):
             return None

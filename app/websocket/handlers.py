@@ -304,6 +304,36 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
                         rejected_from_user_id,
                     )
 
+
+            elif event == "duel_accept_link":
+                from_user_id = message.get("from_user_id")
+
+                try:
+                    from_user_id = int(from_user_id)
+                except (TypeError, ValueError):
+                    await manager.send_personal_message(
+                        {"event": "duel_invite_error", "reason": "invalid_sender"},
+                        user_id,
+                    )
+                    continue
+
+                accept_result = await room_manager.accept_duel_link(user_id, from_user_id)
+
+                if not accept_result.get("ok"):
+                    reason = accept_result.get("reason")
+                    await manager.send_personal_message(
+                        {"event": "duel_invite_error", "reason": reason},
+                        user_id,
+                    )
+                    if reason not in ["sender_offline", "invalid_sender"]:
+                        await manager.send_personal_message(
+                            {"event": "duel_invite_error", "reason": reason},
+                            from_user_id,
+                        )
+                    continue
+
+                await start_duel_room(accept_result["room_id"])
+
             elif event == "duel_accept":
                 from_user_id = message.get("from_user_id")
 
