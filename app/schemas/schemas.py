@@ -40,6 +40,13 @@ class UserOut(BaseModel):
     xp: int
     level: int
     level_progress: int
+    elo: int = 1000
+    rank_title: str = "Silver"
+    rank_icon: str = "⚪"
+    wins: int = 0
+    losses: int = 0
+    draws: int = 0
+    games_played: int = 0
     next_level_xp: int
     streak: int
     best_streak: int
@@ -64,6 +71,13 @@ class LeaderboardUserOut(BaseModel):
     xp: int
     level: int
     level_progress: int  # 🔥 QO'SHILDI
+    elo: int = 1000
+    rank_title: str = "Silver"
+    rank_icon: str = "⚪"
+    wins: int = 0
+    losses: int = 0
+    draws: int = 0
+    games_played: int = 0
     badge: str
     badge_icon: str
     is_me: bool = False
@@ -125,6 +139,13 @@ class AnswerOut(BaseModel):
     total_xp: int
     level: int
     level_progress: int
+    elo: int = 1000
+    rank_title: str = "Silver"
+    rank_icon: str = "⚪"
+    wins: int = 0
+    losses: int = 0
+    draws: int = 0
+    games_played: int = 0
     next_level_xp: int
     mastery_score: int
     streak: int

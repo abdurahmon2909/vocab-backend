@@ -8,6 +8,7 @@ from app.models.models import User, UserXP
 from app.services.learning_service import LearningService
 from app.services.test_service import TestService
 from app.services.xp_service import XPService
+from app.services.duel_rating_service import DuelRatingService
 from app.websocket.room_manager import Player, room_manager
 
 
@@ -46,6 +47,7 @@ async def get_user_duel_profile(user_id: int):
         row = result.first()
 
         if not row:
+            rating = await DuelRatingService.get_user_rating_payload(db, user_id)
             return {
                 "user_id": user_id,
                 "nickname": "Learner",
@@ -53,26 +55,22 @@ async def get_user_duel_profile(user_id: int):
                 "level": 0,
                 "rank": None,
                 "photo_url": None,
+                **rating,
             }
 
         user, total_xp = row
         total_xp = int(total_xp or 0)
-
-        rank_result = await db.execute(
-            select(func.count(UserXP.user_id)).where(UserXP.total_xp > total_xp)
-        )
-        better_count = int(rank_result.scalar() or 0)
+        rating = await DuelRatingService.get_user_rating_payload(db, user_id)
 
         return {
             "user_id": user_id,
             "nickname": user.nickname or user.first_name or user.username or "Learner",
             "xp": total_xp,
             "level": XPService.level_from_xp(total_xp),
-            "rank": better_count + 1,
+            "rank": rating.get("duel_rank"),
             "photo_url": user.photo_url,
+            **rating,
         }
-
-
 async def enrich_final_data(final_data: dict):
     if not final_data:
         return None
@@ -97,6 +95,21 @@ def _player_flag(final_data: dict, key: str, player_key: str) -> bool:
 
 
 async def send_duel_final(final_data: dict):
+    if not final_data:
+        return
+
+    # ELO faqat shu yerda yangilanadi. Duel online queue orqali boshlanganmi,
+    # Telegram invite/deeplink orqali boshlanganmi — farqi yo‘q.
+    async with SessionLocal() as db:
+        elo_result = await DuelRatingService.apply_duel_result(
+            db,
+            player1_id=final_data["player1_id"],
+            player2_id=final_data["player2_id"],
+            winner_id=final_data.get("winner"),
+        )
+        await db.commit()
+
+    final_data = {**final_data, "elo_result": elo_result}
     final_data = await enrich_final_data(final_data)
 
     if not final_data:
@@ -116,6 +129,8 @@ async def send_duel_final(final_data: dict):
 
     p1_profile = final_data["profiles"]["player1"]
     p2_profile = final_data["profiles"]["player2"]
+    p1_elo = final_data["elo_result"]["player1"]
+    p2_elo = final_data["elo_result"]["player2"]
 
     await manager.send_personal_message(
         {
@@ -128,6 +143,10 @@ async def send_duel_final(final_data: dict):
             "opponent_xp": p2_xp_gain,
             "my_profile": p1_profile,
             "opponent_profile": p2_profile,
+            "my_elo_delta": p1_elo["delta"],
+            "opponent_elo_delta": p2_elo["delta"],
+            "my_new_elo": p1_elo["new_elo"],
+            "opponent_new_elo": p2_elo["new_elo"],
             "my_surrendered": _player_flag(final_data, "surrendered", "player1"),
             "opponent_surrendered": _player_flag(final_data, "surrendered", "player2"),
             "my_left": _player_flag(final_data, "forfeited", "player1"),
@@ -147,6 +166,10 @@ async def send_duel_final(final_data: dict):
             "opponent_xp": p1_xp_gain,
             "my_profile": p2_profile,
             "opponent_profile": p1_profile,
+            "my_elo_delta": p2_elo["delta"],
+            "opponent_elo_delta": p1_elo["delta"],
+            "my_new_elo": p2_elo["new_elo"],
+            "opponent_new_elo": p1_elo["new_elo"],
             "my_surrendered": _player_flag(final_data, "surrendered", "player2"),
             "opponent_surrendered": _player_flag(final_data, "surrendered", "player1"),
             "my_left": _player_flag(final_data, "forfeited", "player2"),
@@ -154,8 +177,6 @@ async def send_duel_final(final_data: dict):
         },
         p2_id,
     )
-
-
 async def start_duel_room(room_id: str):
     async with SessionLocal() as db:
         questions = await TestService.build_random_questions(db, limit=20)
@@ -303,36 +324,6 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
                         },
                         rejected_from_user_id,
                     )
-
-
-            elif event == "duel_accept_link":
-                from_user_id = message.get("from_user_id")
-
-                try:
-                    from_user_id = int(from_user_id)
-                except (TypeError, ValueError):
-                    await manager.send_personal_message(
-                        {"event": "duel_invite_error", "reason": "invalid_sender"},
-                        user_id,
-                    )
-                    continue
-
-                accept_result = await room_manager.accept_duel_link(user_id, from_user_id)
-
-                if not accept_result.get("ok"):
-                    reason = accept_result.get("reason")
-                    await manager.send_personal_message(
-                        {"event": "duel_invite_error", "reason": reason},
-                        user_id,
-                    )
-                    if reason not in ["sender_offline", "invalid_sender"]:
-                        await manager.send_personal_message(
-                            {"event": "duel_invite_error", "reason": reason},
-                            from_user_id,
-                        )
-                    continue
-
-                await start_duel_room(accept_result["room_id"])
 
             elif event == "duel_accept":
                 from_user_id = message.get("from_user_id")

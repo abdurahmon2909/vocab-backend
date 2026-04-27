@@ -30,11 +30,7 @@ class User(Base):
     photo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     language_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
     is_premium: Mapped[bool] = mapped_column(Boolean, default=False)
-
-    # Bot invite status
-    # is_bot_started=True bo‘lsa, bot shu userga Telegram orqali xabar yubora oladi.
-    # Agar user botni bloklasa, challenge endpoint bu flagni False qiladi va bot_blocked_at yozadi.
-    is_bot_started: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    is_bot_started: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     bot_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     bot_blocked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -183,6 +179,17 @@ class UserXP(Base):
 
     user = relationship("User", back_populates="xp", lazy="joined")
 
+
+class UserDuelRating(Base):
+    __tablename__ = "user_duel_ratings"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.tg_id", ondelete="CASCADE"), primary_key=True)
+    elo: Mapped[int] = mapped_column(Integer, default=1000, index=True)
+    wins: Mapped[int] = mapped_column(Integer, default=0)
+    losses: Mapped[int] = mapped_column(Integer, default=0)
+    draws: Mapped[int] = mapped_column(Integer, default=0)
+    games_played: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 class XPEvent(Base):
     __tablename__ = "xp_events"
