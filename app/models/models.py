@@ -31,6 +31,13 @@ class User(Base):
     language_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
     is_premium: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Bot invite status
+    # is_bot_started=True bo‘lsa, bot shu userga Telegram orqali xabar yubora oladi.
+    # Agar user botni bloklasa, challenge endpoint bu flagni False qiladi va bot_blocked_at yozadi.
+    is_bot_started: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    bot_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    bot_blocked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

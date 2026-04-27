@@ -40,6 +40,19 @@ def _web_app_url() -> str:
     return url
 
 
+def _bot_start_link(sender_user_id: int | None = None) -> str | None:
+    """
+    Botni start qilmagan yoki bloklagan userlar uchun manual invite/deep-link.
+    Telegram bot userga birinchi bo‘lib yoza olmaydi, shuning uchun linkni copy/share qilish kerak bo‘ladi.
+    """
+    bot_username = os.getenv("BOT_USERNAME", "").strip().lstrip("@")
+    if not bot_username:
+        return None
+
+    payload = f"duel_from_{sender_user_id}" if sender_user_id else "duel"
+    return f"https://t.me/{bot_username}?start={payload}"
+
+
 def _bot_internal_secret() -> str:
     secret = os.getenv("BOT_INTERNAL_SECRET")
     if not secret:
@@ -78,6 +91,9 @@ async def register_bot_start_user(
             username=data.get("username"),
             language_code=data.get("language_code"),
             is_premium=bool(data.get("is_premium", False)),
+            is_bot_started=True,
+            bot_started_at=now,
+            bot_blocked_at=None,
             last_seen_at=now,
         )
         db.add(user)
@@ -87,11 +103,19 @@ async def register_bot_start_user(
         user.username = data.get("username")
         user.language_code = data.get("language_code")
         user.is_premium = bool(data.get("is_premium", False))
+        user.is_bot_started = True
+        if not user.bot_started_at:
+            user.bot_started_at = now
+        user.bot_blocked_at = None
         user.last_seen_at = now
 
     await db.commit()
 
-    return {"ok": True, "user_id": tg_id}
+    return {
+        "ok": True,
+        "user_id": tg_id,
+        "start_payload": data.get("start_payload"),
+    }
 
 
 @router.get("/user")
@@ -224,6 +248,9 @@ async def get_duel_challenge_users(
         xp = int(total_xp or 0)
         level = XPService.level_from_xp(xp)
 
+        is_bot_started = bool(getattr(target_user, "is_bot_started", False))
+        bot_blocked = bool(getattr(target_user, "bot_blocked_at", None))
+
         users.append(
             {
                 "user_id": target_user.tg_id,
@@ -232,6 +259,10 @@ async def get_duel_challenge_users(
                 "photo_url": target_user.photo_url,
                 "xp": xp,
                 "level": level,
+                "is_bot_started": is_bot_started,
+                "bot_blocked": bot_blocked,
+                "challenge_available": is_bot_started and not bot_blocked,
+                "bot_start_link": _bot_start_link(user.tg_id),
                 "last_seen_at": target_user.last_seen_at.isoformat() if target_user.last_seen_at else None,
             }
         )
@@ -262,6 +293,28 @@ async def challenge_duel_user(
     target_user = target_result.scalar_one_or_none()
     if not target_user:
         raise HTTPException(status_code=404, detail="Raqib topilmadi")
+
+    invite_link = _bot_start_link(user.tg_id)
+
+    if not getattr(target_user, "is_bot_started", False):
+        return {
+            "ok": False,
+            "reason": "user_not_started_bot",
+            "message": "Bu foydalanuvchi botni hali ishga tushirmagan. Invite linkni unga yuboring.",
+            "invite_link": invite_link,
+            "target_user_id": target_user.tg_id,
+            "target_display_name": _display_name(target_user),
+        }
+
+    if getattr(target_user, "bot_blocked_at", None):
+        return {
+            "ok": False,
+            "reason": "bot_blocked",
+            "message": "Bu foydalanuvchi botni bloklagan bo‘lishi mumkin. Invite linkni unga yuboring.",
+            "invite_link": invite_link,
+            "target_user_id": target_user.tg_id,
+            "target_display_name": _display_name(target_user),
+        }
 
     sender_name = _display_name(user)
 
@@ -294,7 +347,25 @@ async def challenge_duel_user(
 
     result = response.json()
     if not response.is_success or not result.get("ok"):
-        description = result.get("description", "Telegram xabar yuborilmadi")
+        description = str(result.get("description", "Telegram xabar yuborilmadi"))
+        now = datetime.now(timezone.utc)
+
+        # Telegram odatda 403 qaytaradi: bot was blocked by the user / user is deactivated / chat not found
+        if response.status_code in (400, 403) or "blocked" in description.lower() or "chat not found" in description.lower():
+            target_user.is_bot_started = False
+            target_user.bot_blocked_at = now
+            await db.commit()
+
+            return {
+                "ok": False,
+                "reason": "bot_blocked",
+                "message": "Taklif yuborilmadi. Raqib botni bloklagan yoki botni start qilmagan bo‘lishi mumkin.",
+                "invite_link": invite_link,
+                "target_user_id": target_user.tg_id,
+                "target_display_name": _display_name(target_user),
+                "telegram_error": description,
+            }
+
         raise HTTPException(status_code=400, detail=description)
 
     return {
@@ -303,7 +374,6 @@ async def challenge_duel_user(
         "target_user_id": target_user.tg_id,
         "target_display_name": _display_name(target_user),
     }
-
 
 @router.get("/collections")
 async def get_collections(
