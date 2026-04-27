@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +16,7 @@ import edge_tts
 import io
 import os
 import httpx
+from datetime import datetime, timezone
 
 # ✅ ROUTER aniqlanishi KERAK!
 router = APIRouter(prefix="/api")
@@ -37,6 +38,60 @@ def _web_app_url() -> str:
     if not url:
         raise HTTPException(status_code=500, detail="WEB_APP_URL environment variable is required")
     return url
+
+
+def _bot_internal_secret() -> str:
+    secret = os.getenv("BOT_INTERNAL_SECRET")
+    if not secret:
+        raise HTTPException(status_code=500, detail="BOT_INTERNAL_SECRET environment variable is required")
+    return secret
+
+
+@router.post("/bot/start-user")
+async def register_bot_start_user(
+        data: dict,
+        request: Request,
+        db: AsyncSession = Depends(get_db),
+):
+    """
+    Bot /start bosgan userni backend users jadvaliga yozadi.
+    Shu orqali Mini App ichida userni bot orqali duelga chaqirish mumkin bo‘ladi.
+    """
+    if request.headers.get("x-bot-secret") != _bot_internal_secret():
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        tg_id = int(data.get("tg_id"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="tg_id noto‘g‘ri")
+
+    result = await db.execute(select(User).where(User.tg_id == tg_id))
+    user = result.scalar_one_or_none()
+
+    now = datetime.now(timezone.utc)
+
+    if not user:
+        user = User(
+            tg_id=tg_id,
+            first_name=data.get("first_name"),
+            last_name=data.get("last_name"),
+            username=data.get("username"),
+            language_code=data.get("language_code"),
+            is_premium=bool(data.get("is_premium", False)),
+            last_seen_at=now,
+        )
+        db.add(user)
+    else:
+        user.first_name = data.get("first_name")
+        user.last_name = data.get("last_name")
+        user.username = data.get("username")
+        user.language_code = data.get("language_code")
+        user.is_premium = bool(data.get("is_premium", False))
+        user.last_seen_at = now
+
+    await db.commit()
+
+    return {"ok": True, "user_id": tg_id}
 
 
 @router.get("/user")
