@@ -36,6 +36,28 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# ELO faqat bitta duel uchun bir marta hisoblanishi kerak.
+# finish_duel submit_answer, finish_duel retry yoki disconnect orqali qayta kelishi mumkin.
+processed_elo_results: dict[str, dict] = {}
+
+
+def _build_elo_key(final_data: dict) -> str:
+    room_id = final_data.get("room_id")
+    if room_id:
+        return f"room:{room_id}"
+
+    p1 = final_data.get("player1_id")
+    p2 = final_data.get("player2_id")
+    winner = final_data.get("winner")
+    scores = final_data.get("scores") or {}
+    finished_at = final_data.get("finished_at") or {}
+
+    return (
+        f"players:{p1}:{p2}:winner:{winner}:"
+        f"scores:{scores.get('player1')}:{scores.get('player2')}:"
+        f"finished:{finished_at.get('player1')}:{finished_at.get('player2')}"
+    )
+
 
 async def get_user_duel_profile(user_id: int):
     async with SessionLocal() as db:
@@ -98,16 +120,28 @@ async def send_duel_final(final_data: dict):
     if not final_data:
         return
 
-    # ELO faqat shu yerda yangilanadi. Duel online queue orqali boshlanganmi,
-    # Telegram invite/deeplink orqali boshlanganmi — farqi yo‘q.
-    async with SessionLocal() as db:
-        elo_result = await DuelRatingService.apply_duel_result(
-            db,
-            player1_id=final_data["player1_id"],
-            player2_id=final_data["player2_id"],
-            winner_id=final_data.get("winner"),
-        )
-        await db.commit()
+    elo_key = _build_elo_key(final_data)
+
+    # ELO update idempotent: bir duel uchun faqat bir marta yoziladi.
+    # Keyingi retry/final chaqiriqlarda oldingi elo_result qayta ishlatiladi.
+    if elo_key in processed_elo_results:
+        elo_result = processed_elo_results[elo_key]
+    else:
+        async with SessionLocal() as db:
+            elo_result = await DuelRatingService.apply_duel_result(
+                db,
+                player1_id=final_data["player1_id"],
+                player2_id=final_data["player2_id"],
+                winner_id=final_data.get("winner"),
+            )
+            await db.commit()
+
+        processed_elo_results[elo_key] = elo_result
+
+        # Xotira cheksiz oshib ketmasligi uchun eski cache'ni yumshoq tozalaymiz.
+        if len(processed_elo_results) > 1000:
+            first_key = next(iter(processed_elo_results))
+            processed_elo_results.pop(first_key, None)
 
     final_data = {**final_data, "elo_result": elo_result}
     final_data = await enrich_final_data(final_data)
@@ -132,6 +166,26 @@ async def send_duel_final(final_data: dict):
     p1_elo = final_data["elo_result"]["player1"]
     p2_elo = final_data["elo_result"]["player2"]
 
+    # Profile ichida ham ELO delta bo'lsin — frontend final card va badge'lar uchun qulay.
+    p1_profile.update(
+        {
+            "old_elo": p1_elo["old_elo"],
+            "elo": p1_elo["new_elo"],
+            "elo_change": p1_elo["delta"],
+            "rank_title": p1_elo["rank_title"],
+            "rank_icon": p1_elo["rank_icon"],
+        }
+    )
+    p2_profile.update(
+        {
+            "old_elo": p2_elo["old_elo"],
+            "elo": p2_elo["new_elo"],
+            "elo_change": p2_elo["delta"],
+            "rank_title": p2_elo["rank_title"],
+            "rank_icon": p2_elo["rank_icon"],
+        }
+    )
+
     await manager.send_personal_message(
         {
             **final_data,
@@ -145,8 +199,14 @@ async def send_duel_final(final_data: dict):
             "opponent_profile": p2_profile,
             "my_elo_delta": p1_elo["delta"],
             "opponent_elo_delta": p2_elo["delta"],
+            "my_old_elo": p1_elo["old_elo"],
+            "opponent_old_elo": p2_elo["old_elo"],
             "my_new_elo": p1_elo["new_elo"],
             "opponent_new_elo": p2_elo["new_elo"],
+            "my_rank_title": p1_elo["rank_title"],
+            "my_rank_icon": p1_elo["rank_icon"],
+            "opponent_rank_title": p2_elo["rank_title"],
+            "opponent_rank_icon": p2_elo["rank_icon"],
             "my_surrendered": _player_flag(final_data, "surrendered", "player1"),
             "opponent_surrendered": _player_flag(final_data, "surrendered", "player2"),
             "my_left": _player_flag(final_data, "forfeited", "player1"),
@@ -168,8 +228,14 @@ async def send_duel_final(final_data: dict):
             "opponent_profile": p1_profile,
             "my_elo_delta": p2_elo["delta"],
             "opponent_elo_delta": p1_elo["delta"],
+            "my_old_elo": p2_elo["old_elo"],
+            "opponent_old_elo": p1_elo["old_elo"],
             "my_new_elo": p2_elo["new_elo"],
             "opponent_new_elo": p1_elo["new_elo"],
+            "my_rank_title": p2_elo["rank_title"],
+            "my_rank_icon": p2_elo["rank_icon"],
+            "opponent_rank_title": p1_elo["rank_title"],
+            "opponent_rank_icon": p1_elo["rank_icon"],
             "my_surrendered": _player_flag(final_data, "surrendered", "player2"),
             "opponent_surrendered": _player_flag(final_data, "surrendered", "player1"),
             "my_left": _player_flag(final_data, "forfeited", "player2"),
@@ -177,6 +243,7 @@ async def send_duel_final(final_data: dict):
         },
         p2_id,
     )
+
 async def start_duel_room(room_id: str):
     async with SessionLocal() as db:
         questions = await TestService.build_random_questions(db, limit=20)
