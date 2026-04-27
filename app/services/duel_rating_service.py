@@ -15,7 +15,7 @@ class RankInfo:
 
 
 class DuelRatingService:
-    DEFAULT_ELO = 1000
+    DEFAULT_ELO = 800
 
     # Equal ELO bo‘lsa:
     # Winner: +18
