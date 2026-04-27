@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_user
-from app.models.models import Book, Collection, Unit, Word, UserXP, Streak
+from app.models.models import Book, Collection, Unit, Word, User, UserXP, Streak
 from app.schemas.schemas import AnswerIn, NicknameUpdateIn
 from app.services.learning_service import LearningService
 from app.services.leaderboard_service import LeaderboardService
@@ -14,8 +14,29 @@ from app.services.xp_service import XPService
 from fastapi.responses import StreamingResponse
 import edge_tts
 import io
+import os
+import httpx
+
 # ✅ ROUTER aniqlanishi KERAK!
 router = APIRouter(prefix="/api")
+
+
+def _display_name(user: User) -> str:
+    return user.nickname or user.first_name or user.username or "Learner"
+
+
+def _telegram_api_url() -> str:
+    bot_token = os.getenv("BOT_TOKEN")
+    if not bot_token:
+        raise HTTPException(status_code=500, detail="BOT_TOKEN environment variable is required")
+    return f"https://api.telegram.org/bot{bot_token}/sendMessage"
+
+
+def _web_app_url() -> str:
+    url = os.getenv("WEB_APP_URL")
+    if not url:
+        raise HTTPException(status_code=500, detail="WEB_APP_URL environment variable is required")
+    return url
 
 
 @router.get("/user")
@@ -110,6 +131,123 @@ async def get_stats(
         user=Depends(get_current_user),
 ):
     return await ProgressService.get_stats(db, user.tg_id)
+
+
+@router.get("/duel/challenge-users")
+async def get_duel_challenge_users(
+        q: str | None = Query(default=None, max_length=80),
+        limit: int = Query(default=50, ge=1, le=100),
+        db: AsyncSession = Depends(get_db),
+        user=Depends(get_current_user),
+):
+    """
+    Botga/Mini App'ga kirgan foydalanuvchilar ro'yxati.
+    Frontend shu ro'yxatdan bitta raqibni tanlab, unga duel taklifi yuboradi.
+    """
+    stmt = (
+        select(User, UserXP.total_xp)
+        .outerjoin(UserXP, UserXP.user_id == User.tg_id)
+        .where(User.tg_id != user.tg_id)
+        .order_by(User.last_seen_at.desc().nullslast(), User.created_at.desc())
+        .limit(limit)
+    )
+
+    if q:
+        search = f"%{q.strip()}%"
+        stmt = stmt.where(
+            (User.nickname.ilike(search))
+            | (User.first_name.ilike(search))
+            | (User.last_name.ilike(search))
+            | (User.username.ilike(search))
+        )
+
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    users = []
+    for target_user, total_xp in rows:
+        xp = int(total_xp or 0)
+        level = XPService.level_from_xp(xp)
+
+        users.append(
+            {
+                "user_id": target_user.tg_id,
+                "display_name": _display_name(target_user),
+                "username": target_user.username,
+                "photo_url": target_user.photo_url,
+                "xp": xp,
+                "level": level,
+                "last_seen_at": target_user.last_seen_at.isoformat() if target_user.last_seen_at else None,
+            }
+        )
+
+    return users
+
+
+@router.post("/duel/challenge-user")
+async def challenge_duel_user(
+        data: dict,
+        db: AsyncSession = Depends(get_db),
+        user=Depends(get_current_user),
+):
+    """
+    Tanlangan bitta foydalanuvchiga Telegram bot orqali duel taklifi yuboradi.
+    """
+    target_user_id = data.get("target_user_id")
+
+    try:
+        target_user_id = int(target_user_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="target_user_id noto‘g‘ri")
+
+    if target_user_id == user.tg_id:
+        raise HTTPException(status_code=400, detail="O‘zingizni duelga chaqira olmaysiz")
+
+    target_result = await db.execute(select(User).where(User.tg_id == target_user_id))
+    target_user = target_result.scalar_one_or_none()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="Raqib topilmadi")
+
+    sender_name = _display_name(user)
+
+    text = (
+        f"⚔️ <b>{sender_name}</b> sizni duelga chorlamoqda!\n\n"
+        "Qurollaning! WordLegends jang maydoni sizni kutmoqda."
+    )
+
+    async with httpx.AsyncClient(timeout=12) as client:
+        response = await client.post(
+            _telegram_api_url(),
+            json={
+                "chat_id": target_user.tg_id,
+                "text": text,
+                "parse_mode": "HTML",
+                "reply_markup": {
+                    "inline_keyboard": [
+                        [
+                            {
+                                "text": "⚔️ DUEL",
+                                "web_app": {
+                                    "url": _web_app_url(),
+                                },
+                            }
+                        ]
+                    ]
+                },
+            },
+        )
+
+    result = response.json()
+    if not response.is_success or not result.get("ok"):
+        description = result.get("description", "Telegram xabar yuborilmadi")
+        raise HTTPException(status_code=400, detail=description)
+
+    return {
+        "ok": True,
+        "message": "Duel taklifi yuborildi",
+        "target_user_id": target_user.tg_id,
+        "target_display_name": _display_name(target_user),
+    }
 
 
 @router.get("/collections")
@@ -266,6 +404,7 @@ async def answer(
         correct_answer=data.correct_answer,
     )
 
+
 @router.post("/mode-progress/best")
 async def save_mode_best_progress(
         data: dict,
@@ -312,6 +451,7 @@ async def save_mode_best_progress(
         ),
         "mission_updates": mission_updates,
     }
+
 
 @router.get("/tts")
 async def tts(text: str):
