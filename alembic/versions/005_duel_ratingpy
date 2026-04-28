@@ -1,6 +1,6 @@
 """duel rating, bot status, answer session
 
-Revision ID: 005_duel_rating_bot_status_answer_session
+Revision ID: 005_duel_rating
 Revises: 004_add_unit_is_active
 Create Date: 2026-04-28
 """
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy import inspect
 
 
-revision = "005_duel_rating_bot_status_answer_session"
+revision = "005_duel_rating"
 down_revision = "004_add_unit_is_active"
 branch_labels = None
 depends_on = None
