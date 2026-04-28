@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timedelta
 
 from fastapi import WebSocket, WebSocketDisconnect
 from sqlalchemy import func, select
@@ -39,7 +40,17 @@ manager = ConnectionManager()
 # ELO faqat bitta duel uchun bir marta hisoblanishi kerak.
 # finish_duel submit_answer, finish_duel retry yoki disconnect orqali qayta kelishi mumkin.
 processed_elo_results: dict[str, dict] = {}
+processed_elo_results_created_at: dict[str, datetime] = {}
+PROCESSED_ELO_TTL = timedelta(minutes=30)
 
+
+def cleanup_processed_elo_results() -> None:
+    now = datetime.now()
+
+    for key, created_at in list(processed_elo_results_created_at.items()):
+        if now - created_at > PROCESSED_ELO_TTL:
+            processed_elo_results_created_at.pop(key, None)
+            processed_elo_results.pop(key, None)
 
 def _build_elo_key(final_data: dict) -> str:
     room_id = final_data.get("room_id")
@@ -137,11 +148,13 @@ async def send_duel_final(final_data: dict):
             await db.commit()
 
         processed_elo_results[elo_key] = elo_result
+        processed_elo_results_created_at[elo_key] = datetime.now()
+        cleanup_processed_elo_results()
 
-        # Xotira cheksiz oshib ketmasligi uchun eski cache'ni yumshoq tozalaymiz.
         if len(processed_elo_results) > 1000:
-            first_key = next(iter(processed_elo_results))
-            processed_elo_results.pop(first_key, None)
+            for key in list(processed_elo_results.keys())[:100]:
+                processed_elo_results.pop(key, None)
+                processed_elo_results_created_at.pop(key, None)
 
     final_data = {**final_data, "elo_result": elo_result}
     final_data = await enrich_final_data(final_data)
@@ -682,8 +695,6 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
 
     finally:
         manager.disconnect(user_id)
-        await room_manager.leave_duel_queue(user_id)
-        await room_manager.leave_team_queue(user_id)
         room_manager.remove_online_user(user_id)
 
         disconnect_result = await room_manager.handle_disconnect(user_id)

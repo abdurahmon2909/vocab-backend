@@ -1,7 +1,7 @@
 import uuid
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List
 
 
@@ -83,6 +83,23 @@ class RoomManager:
         for target_id, from_user_id in list(self.duel_invites.items()):
             if from_user_id == user_id:
                 self.duel_invites.pop(target_id, None)
+    def cleanup_finished_duels(self) -> None:
+        now = datetime.now()
+
+        for room_id, created_at in list(self.finished_duels_created_at.items()):
+            if now - created_at > self.finished_duels_ttl:
+                self.finished_duels_created_at.pop(room_id, None)
+                self.finished_duels.pop(room_id, None)
+
+    def cleanup_user_everywhere(self, user_id: int) -> None:
+        self.remove_online_user(user_id)
+        self.duel_queue = [p for p in self.duel_queue if p.user_id != user_id]
+        self.team_fight_queue["team_a"] = [
+            p for p in self.team_fight_queue["team_a"] if p.user_id != user_id
+        ]
+        self.team_fight_queue["team_b"] = [
+            p for p in self.team_fight_queue["team_b"] if p.user_id != user_id
+        ]
 
     def player_to_dict(self, player: Player | None):
         if not player:
@@ -507,7 +524,9 @@ class RoomManager:
         }
 
         self.finished_duels[room_id] = result
+        self.finished_duels_created_at[room_id] = datetime.now()
         self.duels.pop(room_id, None)
+        self.cleanup_finished_duels()
 
         return result
 
