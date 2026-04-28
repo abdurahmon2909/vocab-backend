@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,12 +18,16 @@ class RankInfo:
 class DuelRatingService:
     DEFAULT_ELO = 800
 
-    # Equal ELO bo‘lsa:
-    # Winner: +18
-    # Loser:  -14
+    # Yumshoq ELO:
+    # winner: +8 dan +28 gacha
+    # loser: winner olganining taxminan yarmi yo‘qotadi
+    MIN_WIN_GAIN = 8
+    MAX_WIN_GAIN = 28
+    MIN_LOSS = 4
+
+    # Winner gain hisoblash uchun asosiy kuch.
+    # Equal ELO bo‘lsa taxminan +18 beradi.
     K_WIN = 36
-    K_LOSS = 28
-    K_DRAW = 16
 
     RANKS: list[RankInfo] = [
         RankInfo("Bronze", "🥉", 0),
@@ -56,7 +61,11 @@ class DuelRatingService:
         return 1 / (1 + 10 ** ((opponent_elo - player_elo) / 400))
 
     @classmethod
-    async def get_or_create_rating(cls, db: AsyncSession, user_id: int) -> UserDuelRating:
+    async def get_or_create_rating(
+        cls,
+        db: AsyncSession,
+        user_id: int,
+    ) -> UserDuelRating:
         result = await db.execute(
             select(UserDuelRating).where(UserDuelRating.user_id == user_id)
         )
@@ -106,19 +115,18 @@ class DuelRatingService:
         }
 
     @classmethod
-    def _winner_delta(cls, winner_elo: int, loser_elo: int) -> int:
+    def _winner_gain(cls, winner_elo: int, loser_elo: int) -> int:
         expected = cls.expected_score(winner_elo, loser_elo)
-        return max(1, round(cls.K_WIN * (1 - expected)))
+        calculated_gain = round(cls.K_WIN * (1 - expected))
+
+        return max(
+            cls.MIN_WIN_GAIN,
+            min(cls.MAX_WIN_GAIN, calculated_gain),
+        )
 
     @classmethod
-    def _loser_delta(cls, loser_elo: int, winner_elo: int) -> int:
-        expected = cls.expected_score(loser_elo, winner_elo)
-        return min(-1, round(cls.K_LOSS * (0 - expected)))
-
-    @classmethod
-    def _draw_delta(cls, player_elo: int, opponent_elo: int) -> int:
-        expected = cls.expected_score(player_elo, opponent_elo)
-        return round(cls.K_DRAW * (0.5 - expected))
+    def _loser_loss(cls, winner_gain: int) -> int:
+        return max(cls.MIN_LOSS, round(winner_gain / 2))
 
     @classmethod
     async def apply_duel_result(
@@ -136,22 +144,29 @@ class DuelRatingService:
         old_p2_elo = int(p2.elo or cls.DEFAULT_ELO)
 
         if winner_id == player1_id:
-            p1_delta = cls._winner_delta(old_p1_elo, old_p2_elo)
-            p2_delta = cls._loser_delta(old_p2_elo, old_p1_elo)
+            winner_gain = cls._winner_gain(old_p1_elo, old_p2_elo)
+            loser_loss = cls._loser_loss(winner_gain)
+
+            p1_delta = winner_gain
+            p2_delta = -loser_loss
 
             p1.wins += 1
             p2.losses += 1
 
         elif winner_id == player2_id:
-            p1_delta = cls._loser_delta(old_p1_elo, old_p2_elo)
-            p2_delta = cls._winner_delta(old_p2_elo, old_p1_elo)
+            winner_gain = cls._winner_gain(old_p2_elo, old_p1_elo)
+            loser_loss = cls._loser_loss(winner_gain)
+
+            p1_delta = -loser_loss
+            p2_delta = winner_gain
 
             p1.losses += 1
             p2.wins += 1
 
         else:
-            p1_delta = cls._draw_delta(old_p1_elo, old_p2_elo)
-            p2_delta = cls._draw_delta(old_p2_elo, old_p1_elo)
+            # Hozircha draw neytral: hech kim ELO yo‘qotmaydi/olmaydi.
+            p1_delta = 0
+            p2_delta = 0
 
             p1.draws += 1
             p2.draws += 1
