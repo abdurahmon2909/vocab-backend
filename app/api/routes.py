@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from app.models.models import User, Word, UserWordProgress
 from app.api.deps import get_db, get_current_user
 from app.models.models import Book, Collection, Unit, Word, User, UserXP, Streak
 from app.schemas.schemas import AnswerIn, NicknameUpdateIn
@@ -467,39 +467,51 @@ async def get_unit_test(
 
 @router.get("/weak-words")
 async def get_weak_words(
-        db: AsyncSession = Depends(get_db),
-        user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    words = await TestService.build_weak_questions(db, user.tg_id, 50)
-    word_ids = [w["word_id"] for w in words]
+    result = await db.execute(
+        select(Word)
+        .join(UserWordProgress, Word.id == UserWordProgress.word_id)
+        .where(
+            UserWordProgress.user_id == user.tg_id,
+            UserWordProgress.mastery_score < 60,
+        )
+        .limit(200)
+    )
 
-    if not word_ids:
-        return []
-
-    result = await db.execute(select(Word).where(Word.id.in_(word_ids)))
-    raw_words = result.scalars().all()
-
-    return [
-        {
-            "id": word.id,
-            "unit_id": word.unit_id,
-            "english": word.english,
-            "uzbek": word.uzbek,
-            "definition": word.definition,
-            "example": word.example,
-        }
-        for word in raw_words
-    ]
+    return result.scalars().all()
 
 
 @router.get("/weak-words/test")
 async def get_weak_test(
-        limit: int = Query(default=20, ge=1, le=50),
-        db: AsyncSession = Depends(get_db),
-        user=Depends(get_current_user),
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    return await TestService.build_weak_questions(db, user.tg_id, limit)
+    result = await db.execute(
+        select(Word)
+        .join(UserWordProgress, Word.id == UserWordProgress.word_id)
+        .where(
+            UserWordProgress.user_id == user.tg_id,
+            UserWordProgress.mastery_score < 60,
+        )
+        .order_by(func.random())
+        .limit(limit)
+    )
 
+    words = result.scalars().all()
+
+    # test formatga aylantirish
+    return [
+        {
+            "word_id": w.id,
+            "unit_id": w.unit_id,
+            "question": w.english,
+            "correct_answer": w.uzbek,
+        }
+        for w in words
+    ]
 
 @router.post("/answer")
 async def answer(
