@@ -519,32 +519,29 @@ async def answer(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    try:
-        word = await db.get(Word, data.word_id)
-        if not word:
-            raise HTTPException(404, "Word not found")
+    word = await db.get(Word, data.word_id)
+    if not word:
+        raise HTTPException(status_code=404, detail="Word not found")
 
-        if not data.mode.startswith("weak_"):
-            if word.unit_id != data.unit_id:
-                raise HTTPException(400, "Wrong unit")
+    if not data.mode.startswith("weak_"):
+        if word.unit_id != data.unit_id:
+            raise HTTPException(status_code=400, detail="Word does not belong to this unit")
 
-        result = await LearningService.process_answer(
-            db=db,
-            user_id=user.tg_id,
-            word_id=data.word_id,
-            unit_id=word.unit_id,
-            mode=data.mode,
-            is_correct=data.is_correct,
-            user_answer=data.user_answer,
-            correct_answer=data.correct_answer,
-            answer_session_id=data.answer_session_id,
-        )
+        access = await ProgressService.can_access_unit(db, user.tg_id, data.unit_id)
+        if not access["allowed"]:
+            raise HTTPException(status_code=403, detail=access["reason"])
 
-        return result
-
-    except Exception as e:
-        print("🔥 ANSWER ERROR:", e)
-        raise HTTPException(500, str(e))
+    return await LearningService.process_answer(
+        db=db,
+        user_id=user.tg_id,
+        word_id=data.word_id,
+        unit_id=word.unit_id,
+        mode=data.mode,
+        is_correct=data.is_correct,
+        user_answer=data.user_answer,
+        correct_answer=data.correct_answer,
+        answer_session_id=data.answer_session_id,
+    )
 
 @router.post("/mode-progress/best")
 async def save_mode_best_progress(
