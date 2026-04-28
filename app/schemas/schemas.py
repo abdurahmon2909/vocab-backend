@@ -131,6 +131,7 @@ class AnswerIn(BaseModel):
     is_correct: bool
     user_answer: str | None = None
     correct_answer: str | None = None
+    answer_session_id: str | None = None
 
 
 class AnswerOut(BaseModel):

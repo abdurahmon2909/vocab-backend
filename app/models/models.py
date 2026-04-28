@@ -247,6 +247,12 @@ class Answer(Base):
     word_id: Mapped[int] = mapped_column(ForeignKey("words.id", ondelete="CASCADE"), index=True)
     unit_id: Mapped[int] = mapped_column(ForeignKey("units.id", ondelete="CASCADE"), index=True)
     mode: Mapped[str] = mapped_column(String(40))
+    answer_session_id: Mapped[str] = mapped_column(
+        String(120),
+        default="legacy",
+        index=True,
+        nullable=False,
+    )
     is_correct: Mapped[bool] = mapped_column(Boolean)
     user_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
     correct_answer: Mapped[str | None] = mapped_column(Text, nullable=True)

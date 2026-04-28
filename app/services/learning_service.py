@@ -70,8 +70,7 @@ class LearningService:
                 is_completed=attempt_percent >= 80,
             )
             db.add(progress)
-            await db.commit()
-            await db.refresh(progress)
+            await db.flush()
             return progress
 
         old_percent = int(progress.progress_percent or 0)
@@ -82,8 +81,7 @@ class LearningService:
             progress.progress_percent = attempt_percent
             progress.is_completed = attempt_percent >= 80
 
-        await db.commit()
-        await db.refresh(progress)
+        await db.flush()
         return progress
 
     @staticmethod
@@ -96,7 +94,20 @@ class LearningService:
         is_correct: bool,
         user_answer: str | None = None,
         correct_answer: str | None = None,
+        answer_session_id: str | None = None,
     ):
+        answer_session_id = (answer_session_id or f"legacy:{unit_id}:{mode}").strip()[:120]
+
+        duplicate_result = await db.execute(
+            select(Answer).where(
+                Answer.user_id == user_id,
+                Answer.word_id == word_id,
+                Answer.mode == mode,
+                Answer.answer_session_id == answer_session_id,
+            )
+        )
+        duplicate_answer = duplicate_result.scalar_one_or_none()
+
         progress_result = await db.execute(
             select(UserWordProgress).where(
                 UserWordProgress.user_id == user_id,
@@ -104,6 +115,29 @@ class LearningService:
             )
         )
         progress = progress_result.scalar_one_or_none()
+
+        xp_row = await db.get(UserXP, user_id)
+        if not xp_row:
+            xp_row = UserXP(user_id=user_id, total_xp=0)
+            db.add(xp_row)
+            await db.flush()
+
+        if duplicate_answer:
+            total_xp = xp_row.total_xp
+            level = XPService.level_from_xp(total_xp)
+
+            return {
+                "is_correct": is_correct,
+                "xp_gain": 0,
+                "total_xp": total_xp,
+                "level": level,
+                "level_progress": XPService.level_progress_percent(total_xp),
+                "next_level_xp": XPService.next_level_xp(level),
+                "mastery_score": progress.mastery_score if progress else 0,
+                "streak": 0,
+                "mission_updates": [],
+                "duplicate": True,
+            }
 
         if not progress:
             progress = UserWordProgress(
@@ -131,13 +165,6 @@ class LearningService:
         )
 
         xp_gain = LearningService.xp_for_answer(is_correct, mode)
-
-        xp_row = await db.get(UserXP, user_id)
-        if not xp_row:
-            xp_row = UserXP(user_id=user_id, total_xp=0)
-            db.add(xp_row)
-            await db.flush()
-
         xp_row.total_xp += xp_gain
 
         db.add(
@@ -154,6 +181,7 @@ class LearningService:
                 word_id=word_id,
                 unit_id=unit_id,
                 mode=mode,
+                answer_session_id=answer_session_id,
                 is_correct=is_correct,
                 user_answer=user_answer,
                 correct_answer=correct_answer,
@@ -187,4 +215,5 @@ class LearningService:
             "mastery_score": progress.mastery_score,
             "streak": streak.streak,
             "mission_updates": mission_updates,
+            "duplicate": False,
         }

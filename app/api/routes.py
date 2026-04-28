@@ -527,8 +527,8 @@ async def answer(
         is_correct=data.is_correct,
         user_answer=data.user_answer,
         correct_answer=data.correct_answer,
+        answer_session_id=data.answer_session_id,
     )
-
 
 @router.post("/mode-progress/best")
 async def save_mode_best_progress(
