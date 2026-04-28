@@ -1,9 +1,25 @@
+from datetime import datetime, timezone
+import io
+
+import edge_tts
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import select, func
+from fastapi.responses import StreamingResponse
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.models import User, Word, UserWordProgress
-from app.api.deps import get_db, get_current_user
-from app.models.models import Book, Collection, Unit, Word, User, UserXP, Streak
+
+from app.api.deps import get_current_user, get_db
+from app.core.config import settings
+from app.models.models import (
+    Book,
+    Collection,
+    Streak,
+    Unit,
+    User,
+    UserWordProgress,
+    UserXP,
+    Word,
+)
 from app.schemas.schemas import AnswerIn, NicknameUpdateIn
 from app.services.learning_service import LearningService
 from app.services.leaderboard_service import LeaderboardService
@@ -11,14 +27,7 @@ from app.services.mission_service import MissionService
 from app.services.progress_service import ProgressService
 from app.services.test_service import TestService
 from app.services.xp_service import XPService
-from fastapi.responses import StreamingResponse
-import edge_tts
-import io
-import os
-import httpx
-from datetime import datetime, timezone
 
-# ✅ ROUTER aniqlanishi KERAK!
 router = APIRouter(prefix="/api")
 
 
@@ -27,49 +36,37 @@ def _display_name(user: User) -> str:
 
 
 def _telegram_api_url() -> str:
-    bot_token = os.getenv("BOT_TOKEN")
-    if not bot_token:
-        raise HTTPException(status_code=500, detail="BOT_TOKEN environment variable is required")
-    return f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    if not settings.BOT_TOKEN:
+        raise HTTPException(status_code=500, detail="BOT_TOKEN is required")
+    return f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
 
 
 def _web_app_url() -> str:
-    url = os.getenv("WEB_APP_URL")
-    if not url:
-        raise HTTPException(status_code=500, detail="WEB_APP_URL environment variable is required")
-    return url
+    if not settings.WEB_APP_URL:
+        raise HTTPException(status_code=500, detail="WEB_APP_URL is required")
+    return settings.WEB_APP_URL
 
 
 def _bot_start_link(sender_user_id: int | None = None) -> str | None:
-    """
-    Botni start qilmagan yoki bloklagan userlar uchun manual invite/deep-link.
-    Telegram bot userga birinchi bo‘lib yoza olmaydi, shuning uchun linkni copy/share qilish kerak bo‘ladi.
-    """
-    bot_username = os.getenv("BOT_USERNAME", "").strip().lstrip("@")
-    if not bot_username:
+    if not settings.BOT_USERNAME:
         return None
 
     payload = f"duel_from_{sender_user_id}" if sender_user_id else "duel"
-    return f"https://t.me/{bot_username}?start={payload}"
+    return f"https://t.me/{settings.BOT_USERNAME}?start={payload}"
 
 
 def _bot_internal_secret() -> str:
-    secret = os.getenv("BOT_INTERNAL_SECRET")
-    if not secret:
-        raise HTTPException(status_code=500, detail="BOT_INTERNAL_SECRET environment variable is required")
-    return secret
+    if not settings.BOT_INTERNAL_SECRET:
+        raise HTTPException(status_code=500, detail="BOT_INTERNAL_SECRET is required")
+    return settings.BOT_INTERNAL_SECRET
 
 
 @router.post("/bot/start-user")
 async def register_bot_start_user(
-        data: dict,
-        request: Request,
-        db: AsyncSession = Depends(get_db),
+    data: dict,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    Bot /start bosgan userni backend users jadvaliga yozadi.
-    Shu orqali Mini App ichida userni bot orqali duelga chaqirish mumkin bo‘ladi.
-    """
     if request.headers.get("x-bot-secret") != _bot_internal_secret():
         raise HTTPException(status_code=403, detail="Forbidden")
 
@@ -97,6 +94,15 @@ async def register_bot_start_user(
             last_seen_at=now,
         )
         db.add(user)
+        await db.flush()
+
+        xp = await db.get(UserXP, tg_id)
+        if not xp:
+            db.add(UserXP(user_id=tg_id, total_xp=0))
+
+        streak = await db.get(Streak, tg_id)
+        if not streak:
+            db.add(Streak(user_id=tg_id, streak=0, best_streak=0, last_active_date=None))
     else:
         user.first_name = data.get("first_name")
         user.last_name = data.get("last_name")
@@ -120,31 +126,23 @@ async def register_bot_start_user(
 
 @router.get("/user")
 async def get_user(
-        db: AsyncSession = Depends(get_db),
-        user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    # XP va Streak ni alohida so'rab olish
-    xp_result = await db.execute(
-        select(UserXP).where(UserXP.user_id == user.tg_id)
-    )
-    xp_row = xp_result.scalar_one_or_none()
+    xp_row = getattr(user, "xp", None)
+    streak_row = getattr(user, "streak", None)
 
-    streak_result = await db.execute(
-        select(Streak).where(Streak.user_id == user.tg_id)
-    )
-    streak_row = streak_result.scalar_one_or_none()
+    if not xp_row:
+        xp_row = await db.get(UserXP, user.tg_id)
+
+    if not streak_row:
+        streak_row = await db.get(Streak, user.tg_id)
 
     xp = xp_row.total_xp if xp_row else 0
     level = XPService.level_from_xp(xp)
-
     missions = await MissionService.get_daily_missions(db, user.tg_id)
 
-    display_name = (
-            user.nickname
-            or user.first_name
-            or user.username
-            or "Learner"
-    )
+    display_name = user.nickname or user.first_name or user.username or "Learner"
 
     return {
         "telegram": {
@@ -168,9 +166,9 @@ async def get_user(
 
 @router.patch("/user/nickname")
 async def update_nickname(
-        data: NicknameUpdateIn,
-        db: AsyncSession = Depends(get_db),
-        user=Depends(get_current_user),
+    data: NicknameUpdateIn,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     nickname = data.nickname.strip()
 
@@ -193,9 +191,9 @@ async def update_nickname(
 
 @router.get("/leaderboard")
 async def get_leaderboard(
-        limit: int = Query(default=50, ge=1, le=100),
-        db: AsyncSession = Depends(get_db),
-        user=Depends(get_current_user),
+    limit: int = Query(default=50, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     return await LeaderboardService.get_leaderboard(
         db=db,
@@ -206,29 +204,23 @@ async def get_leaderboard(
 
 @router.get("/stats")
 async def get_stats(
-        db: AsyncSession = Depends(get_db),
-        user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     return await ProgressService.get_stats(db, user.tg_id)
 
 
 @router.get("/duel/challenge-users")
 async def get_duel_challenge_users(
-        q: str | None = Query(default=None, max_length=80),
-        limit: int = Query(default=50, ge=1, le=100),
-        db: AsyncSession = Depends(get_db),
-        user=Depends(get_current_user),
+    q: str | None = Query(default=None, max_length=80),
+    limit: int = Query(default=50, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    """
-    Botga/Mini App'ga kirgan foydalanuvchilar ro'yxati.
-    Frontend shu ro'yxatdan bitta raqibni tanlab, unga duel taklifi yuboradi.
-    """
     stmt = (
         select(User, UserXP.total_xp)
         .outerjoin(UserXP, UserXP.user_id == User.tg_id)
         .where(User.tg_id != user.tg_id)
-        .order_by(User.last_seen_at.desc().nullslast(), User.created_at.desc())
-        .limit(limit)
     )
 
     if q:
@@ -239,6 +231,11 @@ async def get_duel_challenge_users(
             | (User.last_name.ilike(search))
             | (User.username.ilike(search))
         )
+
+    stmt = stmt.order_by(
+        User.last_seen_at.desc().nullslast(),
+        User.created_at.desc(),
+    ).limit(limit)
 
     result = await db.execute(stmt)
     rows = result.all()
@@ -272,13 +269,10 @@ async def get_duel_challenge_users(
 
 @router.post("/duel/challenge-user")
 async def challenge_duel_user(
-        data: dict,
-        db: AsyncSession = Depends(get_db),
-        user=Depends(get_current_user),
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    """
-    Tanlangan bitta foydalanuvchiga Telegram bot orqali duel taklifi yuboradi.
-    """
     target_user_id = data.get("target_user_id")
 
     try:
@@ -291,6 +285,7 @@ async def challenge_duel_user(
 
     target_result = await db.execute(select(User).where(User.tg_id == target_user_id))
     target_user = target_result.scalar_one_or_none()
+
     if not target_user:
         raise HTTPException(status_code=404, detail="Raqib topilmadi")
 
@@ -335,9 +330,7 @@ async def challenge_duel_user(
                         [
                             {
                                 "text": "⚔️ DUEL",
-                                "web_app": {
-                                    "url": _web_app_url(),
-                                },
+                                "web_app": {"url": _web_app_url()},
                             }
                         ]
                     ]
@@ -346,12 +339,16 @@ async def challenge_duel_user(
         )
 
     result = response.json()
+
     if not response.is_success or not result.get("ok"):
         description = str(result.get("description", "Telegram xabar yuborilmadi"))
         now = datetime.now(timezone.utc)
 
-        # Telegram odatda 403 qaytaradi: bot was blocked by the user / user is deactivated / chat not found
-        if response.status_code in (400, 403) or "blocked" in description.lower() or "chat not found" in description.lower():
+        if (
+            response.status_code in (400, 403)
+            or "blocked" in description.lower()
+            or "chat not found" in description.lower()
+        ):
             target_user.is_bot_started = False
             target_user.bot_blocked_at = now
             await db.commit()
@@ -375,19 +372,20 @@ async def challenge_duel_user(
         "target_display_name": _display_name(target_user),
     }
 
+
 @router.get("/collections")
 async def get_collections(
-        db: AsyncSession = Depends(get_db),
-        user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     return await ProgressService.get_collections_with_progress(db, user.tg_id)
 
 
 @router.get("/collections/{collection_id}/books")
 async def get_collection_books(
-        collection_id: int,
-        db: AsyncSession = Depends(get_db),
-        user=Depends(get_current_user),
+    collection_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     collection = await db.get(Collection, collection_id)
     if not collection:
@@ -402,17 +400,17 @@ async def get_collection_books(
 
 @router.get("/books")
 async def get_books(
-        db: AsyncSession = Depends(get_db),
-        user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     return await ProgressService.get_books_with_progress(db, user.tg_id)
 
 
 @router.get("/books/{book_id}/units")
 async def get_units(
-        book_id: int,
-        db: AsyncSession = Depends(get_db),
-        user=Depends(get_current_user),
+    book_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     book = await db.get(Book, book_id)
     if not book:
@@ -423,18 +421,18 @@ async def get_units(
 
 @router.get("/units/{unit_id}/access")
 async def get_unit_access(
-        unit_id: int,
-        db: AsyncSession = Depends(get_db),
-        user=Depends(get_current_user),
+    unit_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     return await ProgressService.can_access_unit(db, user.tg_id, unit_id)
 
 
 @router.get("/units/{unit_id}/words")
 async def get_words(
-        unit_id: int,
-        db: AsyncSession = Depends(get_db),
-        user=Depends(get_current_user),
+    unit_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     unit = await db.get(Unit, unit_id)
     if not unit:
@@ -449,10 +447,10 @@ async def get_words(
 
 @router.get("/units/{unit_id}/test")
 async def get_unit_test(
-        unit_id: int,
-        limit: int = Query(default=20, ge=1, le=50),
-        db: AsyncSession = Depends(get_db),
-        user=Depends(get_current_user),
+    unit_id: int,
+    limit: int = Query(default=20, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     unit = await db.get(Unit, unit_id)
     if not unit:
@@ -485,7 +483,7 @@ async def get_weak_words(
 
 @router.get("/weak-words/test")
 async def get_weak_test(
-    limit: int = 20,
+    limit: int = Query(default=20, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -501,40 +499,32 @@ async def get_weak_test(
     )
 
     words = result.scalars().all()
+    return TestService._build_questions(words, limit)
 
-    # test formatga aylantirish
-    return [
-        {
-            "word_id": w.id,
-            "unit_id": w.unit_id,
-            "question": w.english,
-            "correct_answer": w.uzbek,
-        }
-        for w in words
-    ]
 
 @router.post("/answer")
 async def answer(
-        data: AnswerIn,
-        db: AsyncSession = Depends(get_db),
-        user=Depends(get_current_user),
+    data: AnswerIn,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     word = await db.get(Word, data.word_id)
     if not word:
         raise HTTPException(status_code=404, detail="Word not found")
 
-    if word.unit_id != data.unit_id:
-        raise HTTPException(status_code=400, detail="Word does not belong to this unit")
+    if not data.mode.startswith("weak_"):
+        if word.unit_id != data.unit_id:
+            raise HTTPException(status_code=400, detail="Word does not belong to this unit")
 
-    access = await ProgressService.can_access_unit(db, user.tg_id, data.unit_id)
-    if not access["allowed"]:
-        raise HTTPException(status_code=403, detail=access["reason"])
+        access = await ProgressService.can_access_unit(db, user.tg_id, data.unit_id)
+        if not access["allowed"]:
+            raise HTTPException(status_code=403, detail=access["reason"])
 
     return await LearningService.process_answer(
         db=db,
         user_id=user.tg_id,
         word_id=data.word_id,
-        unit_id=data.unit_id,
+        unit_id=word.unit_id,
         mode=data.mode,
         is_correct=data.is_correct,
         user_answer=data.user_answer,
@@ -542,16 +532,20 @@ async def answer(
         answer_session_id=data.answer_session_id,
     )
 
+
 @router.post("/mode-progress/best")
 async def save_mode_best_progress(
-        data: dict,
-        db: AsyncSession = Depends(get_db),
-        user=Depends(get_current_user),
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    unit_id = int(data.get("unit_id"))
-    mode = str(data.get("mode"))
-    total_questions = int(data.get("total_questions", 0))
-    correct_answers = int(data.get("correct_answers", 0))
+    try:
+        unit_id = int(data.get("unit_id"))
+        mode = str(data.get("mode"))
+        total_questions = int(data.get("total_questions", 0))
+        correct_answers = int(data.get("correct_answers", 0))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid payload")
 
     if mode not in ["test", "writing", "listening", "weak_test", "weak_writing"]:
         raise HTTPException(status_code=400, detail="Invalid mode")
@@ -591,11 +585,14 @@ async def save_mode_best_progress(
 
 
 @router.get("/tts")
-async def tts(text: str):
+async def tts(
+    text: str = Query(..., min_length=1, max_length=120),
+    user: User = Depends(get_current_user),
+):
     try:
         communicate = edge_tts.Communicate(
             text=text,
-            voice="en-US-GuyNeural"  # 🔥 juda yaxshi erkak ovoz
+            voice="en-US-GuyNeural",
         )
 
         audio_stream = io.BytesIO()

@@ -1,4 +1,7 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from app.core.config import settings
+from app.core.security import validate_telegram
 from app.websocket.handlers import handle_websocket
 
 router = APIRouter()
@@ -6,31 +9,31 @@ router = APIRouter()
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    print("🔌 New WebSocket connection request")
+    init_data = websocket.query_params.get("init_data")
+    user_id = None
+
+    if init_data:
+        try:
+            tg = validate_telegram(init_data, settings.BOT_TOKEN)
+            user_id = int(tg["id"])
+        except Exception:
+            await websocket.close(code=1008, reason="Invalid Telegram auth")
+            return
+
+    elif settings.DEBUG:
+        raw_user_id = websocket.query_params.get("user_id")
+        if raw_user_id:
+            try:
+                user_id = int(raw_user_id)
+            except ValueError:
+                await websocket.close(code=1008, reason="Invalid user_id")
+                return
+
+    if not user_id:
+        await websocket.close(code=1008, reason="Missing auth")
+        return
+
     try:
-        user_id = websocket.query_params.get("user_id")
-        print(f"User ID from query: {user_id}")
-
-        if not user_id:
-            print("❌ No user_id provided")
-            await websocket.close(code=1008, reason="Missing user_id")
-            return
-
-        try:
-            user_id_int = int(user_id)
-            print(f"✅ Valid user_id: {user_id_int}")
-        except ValueError:
-            print(f"❌ Invalid user_id: {user_id}")
-            await websocket.close(code=1008, reason="Invalid user_id")
-            return
-
-        await handle_websocket(websocket, user_id_int)
-
+        await handle_websocket(websocket, user_id)
     except WebSocketDisconnect:
-        print("WebSocket disconnected")
-    except Exception as e:
-        print(f"WebSocket error: {e}")
-        try:
-            await websocket.close(code=1011, reason="Internal server error")
-        except:
-            pass
+        pass
