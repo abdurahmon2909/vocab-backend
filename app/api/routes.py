@@ -636,3 +636,19 @@ async def exchange_xp_to_elo(
         user_id=user.tg_id,
         xp_amount=xp_amount,
     )
+
+@router.get("/admin/users")
+async def get_all_users(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    # faqat adminlar
+    from app.core.config import settings
+
+    if user.tg_id not in settings.ADMIN_IDS:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    result = await db.execute(select(User.tg_id))
+    users = [row[0] for row in result.all()]
+
+    return {"users": users}
