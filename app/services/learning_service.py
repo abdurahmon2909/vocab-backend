@@ -15,40 +15,38 @@ from app.services.mission_service import MissionService
 
 
 class LearningService:
+    XP_REWARD_MODES = {"test", "writing", "listening"}
+    XP_PER_CORRECT_ANSWER = 10
+
     @staticmethod
-    def xp_for_answer(is_correct: bool, mode: str) -> int:
+    async def should_award_xp(
+        db: AsyncSession,
+        user_id: int,
+        word_id: int,
+        mode: str,
+        is_correct: bool,
+    ) -> bool:
         if not is_correct:
-            return 2
+            return False
 
-        if mode.startswith("weak"):
-            return 14
+        if mode not in LearningService.XP_REWARD_MODES:
+            return False
 
-        if mode == "writing":
-            return 15
+        previous_correct_result = await db.execute(
+            select(Answer.id)
+            .where(
+                Answer.user_id == user_id,
+                Answer.word_id == word_id,
+                Answer.mode == mode,
+                Answer.is_correct.is_(True),
+            )
+            .limit(1)
+        )
 
-        if mode == "listening":
-            return 12
-
-        if mode == "test":
-            return 10
-
-        if mode == "duel_test":
-            return 10
-
-        if mode == "team_test":
-            return 10
-
-        return 8
+        return previous_correct_result.scalar_one_or_none() is None
 
     @staticmethod
     def update_word_difficulty(word: Word, is_correct: bool) -> None:
-        """
-        Data-driven difficulty:
-        difficulty_score = 1 - correct_answers / total_answers
-
-        0.0 ga yaqin = oson
-        1.0 ga yaqin = qiyin
-        """
         word.total_answers = int(word.total_answers or 0) + 1
 
         if is_correct:
@@ -58,8 +56,6 @@ class LearningService:
             word.difficulty_score = 1 - (
                 int(word.correct_answers or 0) / int(word.total_answers or 1)
             )
-
-            # Safe clamp
             word.difficulty_score = max(0.0, min(1.0, float(word.difficulty_score)))
 
     @staticmethod
@@ -168,6 +164,14 @@ class LearningService:
                 "difficulty_score": float(word.difficulty_score or 0.5) if word else 0.5,
             }
 
+        should_award_xp = await LearningService.should_award_xp(
+            db=db,
+            user_id=user_id,
+            word_id=word_id,
+            mode=mode,
+            is_correct=is_correct,
+        )
+
         if not progress:
             progress = UserWordProgress(
                 user_id=user_id,
@@ -196,16 +200,17 @@ class LearningService:
         if word:
             LearningService.update_word_difficulty(word, is_correct)
 
-        xp_gain = LearningService.xp_for_answer(is_correct, mode)
-        xp_row.total_xp += xp_gain
+        xp_gain = LearningService.XP_PER_CORRECT_ANSWER if should_award_xp else 0
 
-        db.add(
-            XPEvent(
-                user_id=user_id,
-                amount=xp_gain,
-                reason=f"answer:{mode}",
+        if xp_gain > 0:
+            xp_row.total_xp += xp_gain
+            db.add(
+                XPEvent(
+                    user_id=user_id,
+                    amount=xp_gain,
+                    reason=f"answer:{mode}",
+                )
             )
-        )
 
         db.add(
             Answer(
@@ -249,4 +254,5 @@ class LearningService:
             "mission_updates": mission_updates,
             "duplicate": False,
             "difficulty_score": float(word.difficulty_score or 0.5) if word else 0.5,
+            "xp_awarded": xp_gain > 0,
         }
