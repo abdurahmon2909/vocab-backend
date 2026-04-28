@@ -446,6 +446,7 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
                 unit_id = message.get("unit_id")
                 mode = message.get("mode") or "duel_test"
                 correct_answer = message.get("correct_answer")
+                answer_session_id = message.get("answer_session_id") or f"{room_type}:{room_id}"
 
                 saved_xp = 0
 
