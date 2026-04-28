@@ -13,18 +13,6 @@ class DuelQuestionService:
         db: AsyncSession,
         limit: int = 20,
     ) -> list[dict]:
-        """
-        Data-driven duel question mix.
-
-        Boshlanishda hamma so'zlar difficulty_score=0.5 bo'ladi,
-        shuning uchun medium pool asosiy ishlaydi.
-
-        Formula:
-        - 20% easy
-        - 30% medium
-        - 50% hard
-        Fallback: yetmay qolgan savollar random bilan to'ldiriladi.
-        """
         limit = max(1, min(50, int(limit or 20)))
 
         easy_limit = max(1, int(limit * 0.2))
@@ -34,7 +22,10 @@ class DuelQuestionService:
         easy_words = (
             await db.execute(
                 select(Word)
-                .where(Word.difficulty_score < 0.3)
+                .where(
+                    Word.total_answers >= 5,
+                    Word.difficulty_score < 0.3,
+                )
                 .order_by(func.random())
                 .limit(easy_limit)
             )
@@ -44,6 +35,7 @@ class DuelQuestionService:
             await db.execute(
                 select(Word)
                 .where(
+                    Word.total_answers >= 5,
                     Word.difficulty_score >= 0.3,
                     Word.difficulty_score < 0.6,
                 )
@@ -55,22 +47,28 @@ class DuelQuestionService:
         hard_words = (
             await db.execute(
                 select(Word)
-                .where(Word.difficulty_score >= 0.6)
+                .where(
+                    Word.total_answers >= 5,
+                    Word.difficulty_score >= 0.6,
+                )
                 .order_by(func.random())
                 .limit(hard_limit)
             )
         ).scalars().all()
 
         words = list(easy_words) + list(medium_words) + list(hard_words)
-
         existing_ids = {word.id for word in words}
         missing = limit - len(words)
 
         if missing > 0:
+            fallback_query = select(Word)
+
+            if existing_ids:
+                fallback_query = fallback_query.where(~Word.id.in_(existing_ids))
+
             fallback_words = (
                 await db.execute(
-                    select(Word)
-                    .where(~Word.id.in_(existing_ids) if existing_ids else True)
+                    fallback_query
                     .order_by(func.random())
                     .limit(missing)
                 )
