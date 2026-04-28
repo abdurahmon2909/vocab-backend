@@ -191,7 +191,8 @@ async def update_nickname(
 
 @router.get("/leaderboard")
 async def get_leaderboard(
-    limit: int = Query(default=50, ge=1, le=100),
+    limit: int = Query(default=50, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -199,6 +200,7 @@ async def get_leaderboard(
         db=db,
         current_user_id=user.tg_id,
         limit=limit,
+        offset=offset,
     )
 
 
@@ -213,7 +215,7 @@ async def get_stats(
 @router.get("/duel/challenge-users")
 async def get_duel_challenge_users(
     q: str | None = Query(default=None, max_length=80),
-    limit: int = Query(default=50, ge=1, le=100),
+    limit: int = Query(default=50, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):

@@ -20,14 +20,7 @@ class LeaderboardService:
         return "New Learner", "🌱"
 
     @staticmethod
-    def _make_item(
-        *,
-        rank: int,
-        user: User,
-        total_xp: int | None,
-        rating: UserDuelRating | None,
-        current_user_id: int,
-    ) -> dict:
+    def _make_item(*, rank, user, total_xp, rating, current_user_id):
         xp = int(total_xp or 0)
         level = XPService.level_from_xp(xp)
         badge, badge_icon = LeaderboardService._badge_from_level(level)
@@ -74,6 +67,7 @@ class LeaderboardService:
         db: AsyncSession,
         current_user_id: int,
         limit: int = 50,
+        offset: int = 0,
     ):
         elo_expr = func.coalesce(UserDuelRating.elo, DuelRatingService.DEFAULT_ELO)
         xp_expr = func.coalesce(UserXP.total_xp, 0)
@@ -87,15 +81,18 @@ class LeaderboardService:
                 xp_expr.desc(),
                 User.created_at.asc(),
             )
-            .limit(limit)
+            .offset(offset)
+            .limit(limit + 1)
         )
 
         rows = result.all()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
 
         top = []
         me = None
 
-        for index, (user, total_xp, rating) in enumerate(rows, start=1):
+        for index, (user, total_xp, rating) in enumerate(rows, start=offset + 1):
             item = LeaderboardService._make_item(
                 rank=index,
                 user=user,
@@ -134,4 +131,8 @@ class LeaderboardService:
         return {
             "me": me,
             "top": top,
+            "limit": limit,
+            "offset": offset,
+            "next_offset": offset + limit,
+            "has_more": has_more,
         }
