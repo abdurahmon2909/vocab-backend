@@ -184,7 +184,7 @@ class UserDuelRating(Base):
     __tablename__ = "user_duel_ratings"
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.tg_id", ondelete="CASCADE"), primary_key=True)
-    elo: Mapped[int] = mapped_column(Integer, default=1000, index=True)
+    elo: Mapped[int] = mapped_column(Integer, default=800, index=True)
     wins: Mapped[int] = mapped_column(Integer, default=0)
     losses: Mapped[int] = mapped_column(Integer, default=0)
     draws: Mapped[int] = mapped_column(Integer, default=0)

@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import User, UserDuelRating, UserXP
@@ -18,31 +18,6 @@ class LeaderboardService:
         if level >= 6:
             return "Active Learner", "⚡"
         return "New Learner", "🌱"
-
-    @staticmethod
-    async def _ensure_all_ratings(db: AsyncSession) -> None:
-        users_result = await db.execute(select(User.tg_id))
-        user_ids = [int(x) for x in users_result.scalars().all()]
-
-        ratings_result = await db.execute(select(UserDuelRating.user_id))
-        existing_ids = {int(x) for x in ratings_result.scalars().all()}
-
-        missing_ids = [user_id for user_id in user_ids if user_id not in existing_ids]
-
-        for user_id in missing_ids:
-            db.add(
-                UserDuelRating(
-                    user_id=user_id,
-                    elo=DuelRatingService.DEFAULT_ELO,
-                    wins=0,
-                    losses=0,
-                    draws=0,
-                    games_played=0,
-                )
-            )
-
-        if missing_ids:
-            await db.flush()
 
     @staticmethod
     def _make_item(
@@ -83,20 +58,33 @@ class LeaderboardService:
         }
 
     @staticmethod
+    async def _get_rank_position(db: AsyncSession, elo: int) -> int:
+        elo_expr = func.coalesce(UserDuelRating.elo, DuelRatingService.DEFAULT_ELO)
+
+        result = await db.execute(
+            select(func.count(User.tg_id))
+            .outerjoin(UserDuelRating, UserDuelRating.user_id == User.tg_id)
+            .where(elo_expr > elo)
+        )
+
+        return int(result.scalar() or 0) + 1
+
+    @staticmethod
     async def get_leaderboard(
         db: AsyncSession,
         current_user_id: int,
         limit: int = 50,
     ):
-        await LeaderboardService._ensure_all_ratings(db)
+        elo_expr = func.coalesce(UserDuelRating.elo, DuelRatingService.DEFAULT_ELO)
+        xp_expr = func.coalesce(UserXP.total_xp, 0)
 
         result = await db.execute(
             select(User, UserXP.total_xp, UserDuelRating)
             .outerjoin(UserXP, UserXP.user_id == User.tg_id)
-            .join(UserDuelRating, UserDuelRating.user_id == User.tg_id)
+            .outerjoin(UserDuelRating, UserDuelRating.user_id == User.tg_id)
             .order_by(
-                UserDuelRating.elo.desc(),
-                UserXP.total_xp.desc().nullslast(),
+                elo_expr.desc(),
+                xp_expr.desc(),
                 User.created_at.asc(),
             )
             .limit(limit)
@@ -124,14 +112,16 @@ class LeaderboardService:
             me_result = await db.execute(
                 select(User, UserXP.total_xp, UserDuelRating)
                 .outerjoin(UserXP, UserXP.user_id == User.tg_id)
-                .join(UserDuelRating, UserDuelRating.user_id == User.tg_id)
+                .outerjoin(UserDuelRating, UserDuelRating.user_id == User.tg_id)
                 .where(User.tg_id == current_user_id)
             )
+
             row = me_result.first()
 
             if row:
                 user, total_xp, rating = row
-                rank_position = await DuelRatingService.get_rank_position(db, current_user_id)
+                elo = int(rating.elo if rating else DuelRatingService.DEFAULT_ELO)
+                rank_position = await LeaderboardService._get_rank_position(db, elo)
 
                 me = LeaderboardService._make_item(
                     rank=rank_position,
@@ -140,8 +130,6 @@ class LeaderboardService:
                     rating=rating,
                     current_user_id=current_user_id,
                 )
-
-        await db.commit()
 
         return {
             "me": me,
