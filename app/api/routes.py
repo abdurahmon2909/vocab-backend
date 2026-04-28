@@ -652,3 +652,22 @@ async def get_all_users(
     users = [row[0] for row in result.all()]
 
     return {"users": users}
+
+@router.get("/bot/broadcast-users")
+async def get_broadcast_users(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    if request.headers.get("x-bot-secret") != settings.BOT_INTERNAL_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    result = await db.execute(
+        select(User.tg_id)
+    )
+
+    users = [int(row[0]) for row in result.all()]
+
+    return {
+        "users": users,
+        "count": len(users),
+    }
