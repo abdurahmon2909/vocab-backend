@@ -346,7 +346,10 @@ async def challenge_duel_user(
                             {
                                 "text": "⚔️ DUEL",
                                 "web_app": {
-                                    "url": _web_app_url(),
+                                    "url": (
+                                        f"{_web_app_url()}{'&' if '?' in _web_app_url() else '?'}"
+                                        f"tab=duel&duel_from={user.tg_id}"
+                                    ),
                                 },
                             }
                         ]

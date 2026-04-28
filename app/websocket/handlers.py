@@ -4,7 +4,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from sqlalchemy import func, select
 
 from app.db.session import SessionLocal
-from app.models.models import User, UserXP
+from app.models.models import User, UserXP, XPEvent
 from app.services.learning_service import LearningService
 from app.services.test_service import TestService
 from app.services.xp_service import XPService
@@ -93,6 +93,26 @@ async def get_user_duel_profile(user_id: int):
             "photo_url": user.photo_url,
             **rating,
         }
+
+
+async def award_duel_xp(user_id: int, amount: int = 1) -> int:
+    if amount <= 0:
+        return 0
+
+    async with SessionLocal() as db:
+        xp_row = await db.get(UserXP, user_id)
+
+        if not xp_row:
+            xp_row = UserXP(user_id=user_id, total_xp=0)
+            db.add(xp_row)
+            await db.flush()
+
+        xp_row.total_xp = int(xp_row.total_xp or 0) + amount
+        db.add(XPEvent(user_id=user_id, amount=amount, reason="duel_correct"))
+        await db.commit()
+
+    return amount
+
 async def enrich_final_data(final_data: dict):
     if not final_data:
         return None
@@ -420,6 +440,52 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
 
                 await start_duel_room(accept_result["room_id"])
 
+            elif event == "duel_accept_link":
+                from_user_id = message.get("from_user_id")
+
+                try:
+                    from_user_id = int(from_user_id)
+                except (TypeError, ValueError):
+                    await manager.send_personal_message(
+                        {"event": "duel_invite_error", "reason": "invalid_sender"},
+                        user_id,
+                    )
+                    continue
+
+                if from_user_id == user_id:
+                    await manager.send_personal_message(
+                        {"event": "duel_invite_error", "reason": "self_invite"},
+                        user_id,
+                    )
+                    continue
+
+                sender_player = room_manager.online_users.get(from_user_id)
+                target_player = room_manager.online_users.get(user_id)
+
+                if not sender_player:
+                    await manager.send_personal_message(
+                        {"event": "duel_invite_error", "reason": "sender_offline"},
+                        user_id,
+                    )
+                    continue
+
+                if not target_player:
+                    await manager.send_personal_message(
+                        {"event": "duel_invite_error", "reason": "target_offline"},
+                        user_id,
+                    )
+                    continue
+
+                if room_manager.is_user_in_active_duel(from_user_id) or room_manager.is_user_in_active_duel(user_id):
+                    await manager.send_personal_message(
+                        {"event": "duel_invite_error", "reason": "user_busy"},
+                        user_id,
+                    )
+                    continue
+
+                room_id = await room_manager.create_duel_room(sender_player, target_player)
+                await start_duel_room(room_id)
+
             elif event == "join_duel":
                 room_id = await room_manager.join_duel_queue(player)
 
@@ -481,23 +547,23 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
                 saved_xp = 0
 
                 if room_type == "duel":
-                    if word_id and unit_id:
+                    room = room_manager.duels.get(room_id)
+                    player = None
+
+                    if room:
+                        player, _ = room_manager._get_duel_players(room, user_id)
+
+                    already_answered = bool(
+                        player
+                        and any(a.get("question_index") == question_index for a in player.answers)
+                    )
+
+                    if is_correct and not already_answered:
                         try:
-                            async with SessionLocal() as db:
-                                res = await LearningService.process_answer(
-                                    db=db,
-                                    user_id=user_id,
-                                    word_id=int(word_id),
-                                    unit_id=int(unit_id),
-                                    mode=mode,
-                                    is_correct=is_correct,
-                                    user_answer=answer,
-                                    correct_answer=correct_answer,
-                                    answer_session_id=answer_session_id,
-                                )
-                                saved_xp = int(res.get("xp_gain", 0))
+                            saved_xp = await award_duel_xp(user_id, 1)
                         except Exception as e:
-                            print(f"❌ XP save error: {e}")
+                            saved_xp = 0
+                            print(f"❌ Duel XP save error: {e}")
 
                     result = await room_manager.submit_duel_answer(
                         room_id=room_id,
