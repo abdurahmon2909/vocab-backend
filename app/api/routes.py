@@ -3,6 +3,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.models import User, Word, UserWordProgress
 from app.api.deps import get_db, get_current_user
+from app.services.xp_elo_exchange_service import XpEloExchangeService
 from app.core.config import settings
 from app.models.models import Book, Collection, Unit, Word, User, UserXP, Streak
 from app.schemas.schemas import AnswerIn, NicknameUpdateIn
@@ -611,3 +612,24 @@ async def tts(text: str):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/market")
+async def get_market(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    return await XpEloExchangeService.get_market_status(db, user.tg_id)
+
+@router.post("/market/exchange")
+async def exchange_xp_to_elo(
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    xp_amount = data.get("xp_amount")
+
+    return await XpEloExchangeService.exchange(
+        db=db,
+        user_id=user.tg_id,
+        xp_amount=xp_amount,
+    )
