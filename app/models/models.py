@@ -263,3 +263,20 @@ class Answer(Base):
     user_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
     correct_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+class EloExchange(Base):
+    __tablename__ = "elo_exchange"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.tg_id", ondelete="CASCADE"),
+        index=True,
+    )
+
+    xp_amount: Mapped[int] = mapped_column(Integer)
+    elo_amount: Mapped[int] = mapped_column(Integer)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
