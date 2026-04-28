@@ -27,6 +27,7 @@ class User(Base):
     last_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     nickname: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    nickname_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     photo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     language_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
     is_premium: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -184,7 +185,7 @@ class UserDuelRating(Base):
     __tablename__ = "user_duel_ratings"
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.tg_id", ondelete="CASCADE"), primary_key=True)
-    elo: Mapped[int] = mapped_column(Integer, default=800, index=True)
+    elo: Mapped[int] = mapped_column(Integer, default=1000, index=True)
     wins: Mapped[int] = mapped_column(Integer, default=0)
     losses: Mapped[int] = mapped_column(Integer, default=0)
     draws: Mapped[int] = mapped_column(Integer, default=0)
@@ -247,12 +248,6 @@ class Answer(Base):
     word_id: Mapped[int] = mapped_column(ForeignKey("words.id", ondelete="CASCADE"), index=True)
     unit_id: Mapped[int] = mapped_column(ForeignKey("units.id", ondelete="CASCADE"), index=True)
     mode: Mapped[str] = mapped_column(String(40))
-    answer_session_id: Mapped[str] = mapped_column(
-        String(120),
-        default="legacy",
-        index=True,
-        nullable=False,
-    )
     is_correct: Mapped[bool] = mapped_column(Boolean)
     user_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
     correct_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
