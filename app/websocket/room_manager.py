@@ -63,6 +63,8 @@ class RoomManager:
     def __init__(self):
         self.duels: Dict[str, DuelRoom] = {}
         self.finished_duels: Dict[str, dict] = {}
+        self.finished_duels_created_at: Dict[str, datetime] = {}
+        self.finished_duels_ttl = timedelta(minutes=30)
         self.duel_queue: List[Player] = []
         self.online_users: Dict[int, Player] = {}
         self.duel_invites: Dict[int, int] = {}
@@ -72,17 +74,6 @@ class RoomManager:
             "team_b": [],
         }
 
-    def add_online_user(self, player: Player):
-        player.is_connected = True
-        player.left_at = None
-        self.online_users[player.user_id] = player
-
-    def remove_online_user(self, user_id: int):
-        self.online_users.pop(user_id, None)
-        self.duel_invites.pop(user_id, None)
-        for target_id, from_user_id in list(self.duel_invites.items()):
-            if from_user_id == user_id:
-                self.duel_invites.pop(target_id, None)
     def cleanup_finished_duels(self) -> None:
         now = datetime.now()
 
@@ -100,6 +91,18 @@ class RoomManager:
         self.team_fight_queue["team_b"] = [
             p for p in self.team_fight_queue["team_b"] if p.user_id != user_id
         ]
+
+    def add_online_user(self, player: Player):
+        player.is_connected = True
+        player.left_at = None
+        self.online_users[player.user_id] = player
+
+    def remove_online_user(self, user_id: int):
+        self.online_users.pop(user_id, None)
+        self.duel_invites.pop(user_id, None)
+        for target_id, from_user_id in list(self.duel_invites.items()):
+            if from_user_id == user_id:
+                self.duel_invites.pop(target_id, None)
 
     def player_to_dict(self, player: Player | None):
         if not player:

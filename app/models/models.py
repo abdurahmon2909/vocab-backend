@@ -11,7 +11,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Index,
-    func,
+    func, Float,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -109,6 +109,9 @@ class Word(Base):
     definition: Mapped[str | None] = mapped_column(Text, nullable=True)
     example: Mapped[str | None] = mapped_column(Text, nullable=True)
     order_index: Mapped[int] = mapped_column(Integer, default=0)
+    total_answers: Mapped[int] = mapped_column(Integer, default=0)
+    correct_answers: Mapped[int] = mapped_column(Integer, default=0)
+    difficulty_score: Mapped[float] = mapped_column(Float, default=0.5, index=True)
 
     unit = relationship("Unit", back_populates="words", lazy="selectin")
 

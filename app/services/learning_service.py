@@ -7,6 +7,7 @@ from app.models.models import (
     UserWordProgress,
     UserXP,
     XPEvent,
+    Word,
 )
 from app.services.xp_service import XPService
 from app.services.streak_service import StreakService
@@ -34,7 +35,32 @@ class LearningService:
         if mode == "duel_test":
             return 10
 
+        if mode == "team_test":
+            return 10
+
         return 8
+
+    @staticmethod
+    def update_word_difficulty(word: Word, is_correct: bool) -> None:
+        """
+        Data-driven difficulty:
+        difficulty_score = 1 - correct_answers / total_answers
+
+        0.0 ga yaqin = oson
+        1.0 ga yaqin = qiyin
+        """
+        word.total_answers = int(word.total_answers or 0) + 1
+
+        if is_correct:
+            word.correct_answers = int(word.correct_answers or 0) + 1
+
+        if word.total_answers > 0:
+            word.difficulty_score = 1 - (
+                int(word.correct_answers or 0) / int(word.total_answers or 1)
+            )
+
+            # Safe clamp
+            word.difficulty_score = max(0.0, min(1.0, float(word.difficulty_score)))
 
     @staticmethod
     async def update_mode_best_progress(
@@ -122,8 +148,10 @@ class LearningService:
             db.add(xp_row)
             await db.flush()
 
+        word = await db.get(Word, word_id)
+
         if duplicate_answer:
-            total_xp = xp_row.total_xp
+            total_xp = int(xp_row.total_xp or 0)
             level = XPService.level_from_xp(total_xp)
 
             return {
@@ -137,6 +165,7 @@ class LearningService:
                 "streak": 0,
                 "mission_updates": [],
                 "duplicate": True,
+                "difficulty_score": float(word.difficulty_score or 0.5) if word else 0.5,
             }
 
         if not progress:
@@ -163,6 +192,9 @@ class LearningService:
         progress.mastery_score = int(
             (progress.correct_count / progress.seen_count) * 100
         )
+
+        if word:
+            LearningService.update_word_difficulty(word, is_correct)
 
         xp_gain = LearningService.xp_for_answer(is_correct, mode)
         xp_row.total_xp += xp_gain
@@ -202,7 +234,7 @@ class LearningService:
 
         await db.commit()
 
-        total_xp = xp_row.total_xp
+        total_xp = int(xp_row.total_xp or 0)
         level = XPService.level_from_xp(total_xp)
 
         return {
@@ -216,4 +248,5 @@ class LearningService:
             "streak": streak.streak,
             "mission_updates": mission_updates,
             "duplicate": False,
+            "difficulty_score": float(word.difficulty_score or 0.5) if word else 0.5,
         }
