@@ -195,6 +195,27 @@ class UserDuelRating(Base):
     games_played: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
+
+class DuelOpponentStreak(Base):
+    __tablename__ = "duel_opponent_streaks"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.tg_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    opponent_id: Mapped[int] = mapped_column(
+        ForeignKey("users.tg_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    streak_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
 class XPEvent(Base):
     __tablename__ = "xp_events"
 
