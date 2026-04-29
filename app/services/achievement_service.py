@@ -11,10 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import (
     Referral,
+    Streak,
     User,
     UserAchievementProgress,
     UserCompletedUnitAchievement,
     UserDuelRating,
+    UserDuelWinStreakAchievement,
+    UserXP,
 )
 from app.services.duel_rating_service import DuelRatingService
 
@@ -51,13 +54,17 @@ class AchievementService:
         {
             "group_code": "words_correct",
             "title": "So‘z ovchisi",
-            "subtitle": "To‘g‘ri javoblar orqali Legend sari yuring",
+            "subtitle": "Test, Writing, Listening va Duel javoblari hisoblanadi",
             "icon": "🎯",
             "tiers": [
                 (1, 10, 1, "10 ta so‘zni to‘g‘ri topish"),
                 (2, 100, 10, "100 ta so‘zni to‘g‘ri topish"),
                 (3, 500, 50, "500 ta so‘zni to‘g‘ri topish"),
                 (4, 1000, 100, "1000 ta so‘zni to‘g‘ri topish"),
+                (5, 5000, 500, "5000 ta so‘zni to‘g‘ri topish"),
+                (6, 10000, 1000, "10 000 ta so‘zni to‘g‘ri topish"),
+                (7, 50000, 5000, "50 000 ta so‘zni to‘g‘ri topish"),
+                (8, 100000, 10000, "100 000 ta so‘zni to‘g‘ri topish"),
             ],
         },
         {
@@ -71,6 +78,10 @@ class AchievementService:
                 (3, 10, 100, "10 ta Unit tugatish"),
                 (4, 20, 250, "20 ta Unit tugatish"),
                 (5, 50, 500, "50 ta Unit tugatish"),
+                (6, 100, 1000, "100 ta Unit tugatish"),
+                (7, 250, 2500, "250 ta Unit tugatish"),
+                (8, 500, 5000, "500 ta Unit tugatish"),
+                (9, 1000, 10000, "1000 ta Unit tugatish"),
             ],
         },
         {
@@ -83,6 +94,66 @@ class AchievementService:
                 (2, 10, 333, "10 ta do‘st taklif qilish"),
                 (3, 30, 999, "30 ta do‘st taklif qilish"),
                 (4, 50, 2000, "50 ta do‘st taklif qilish"),
+                (5, 100, 5000, "100 ta do‘st taklif qilish"),
+            ],
+        },
+        {
+            "group_code": "duel_wins",
+            "title": "Duel Master",
+            "subtitle": "1v1 duellarda g‘alaba qozoning",
+            "icon": "⚔️",
+            "tiers": [
+                (1, 1, 25, "1 ta duel yutish"),
+                (2, 10, 100, "10 ta duel yutish"),
+                (3, 50, 300, "50 ta duel yutish"),
+                (4, 100, 600, "100 ta duel yutish"),
+                (5, 250, 1500, "250 ta duel yutish"),
+                (6, 500, 3000, "500 ta duel yutish"),
+                (7, 1000, 7000, "1000 ta duel yutish"),
+            ],
+        },
+        {
+            "group_code": "duel_win_streak",
+            "title": "Win Streak",
+            "subtitle": "Ketma-ket duel g‘alabalarini yig‘ing",
+            "icon": "⚡",
+            "tiers": [
+                (1, 2, 20, "2 ta duelni ketma-ket yutish"),
+                (2, 3, 50, "3 ta duelni ketma-ket yutish"),
+                (3, 5, 150, "5 ta duelni ketma-ket yutish"),
+                (4, 10, 500, "10 ta duelni ketma-ket yutish"),
+                (5, 20, 1500, "20 ta duelni ketma-ket yutish"),
+                (6, 50, 5000, "50 ta duelni ketma-ket yutish"),
+            ],
+        },
+        {
+            "group_code": "daily_grinder",
+            "title": "Daily Grinder",
+            "subtitle": "Har kuni faol bo‘lib streakni oshiring",
+            "icon": "🔥",
+            "tiers": [
+                (1, 3, 30, "3 kunlik streak"),
+                (2, 7, 100, "7 kunlik streak"),
+                (3, 14, 250, "14 kunlik streak"),
+                (4, 30, 700, "30 kunlik streak"),
+                (5, 60, 1500, "60 kunlik streak"),
+                (6, 100, 3000, "100 kunlik streak"),
+                (7, 365, 10000, "365 kunlik streak"),
+            ],
+        },
+        {
+            "group_code": "xp_collector",
+            "title": "XP Collector",
+            "subtitle": "XP yig‘ib Legend yo‘lini tezlashtiring",
+            "icon": "💎",
+            "tiers": [
+                (1, 100, 10, "100 XP yig‘ish"),
+                (2, 1000, 50, "1000 XP yig‘ish"),
+                (3, 5000, 150, "5000 XP yig‘ish"),
+                (4, 10000, 300, "10 000 XP yig‘ish"),
+                (5, 50000, 1000, "50 000 XP yig‘ish"),
+                (6, 100000, 2500, "100 000 XP yig‘ish"),
+                (7, 500000, 10000, "500 000 XP yig‘ish"),
             ],
         },
     ]
@@ -139,13 +210,58 @@ class AchievementService:
                     is_completed=False,
                     is_claimed=False,
                 )
-                .on_conflict_do_nothing(index_elements=["user_id", "achievement_code"])
+                .on_conflict_do_update(
+                    index_elements=["user_id", "achievement_code"],
+                    set_={
+                        "target": tier.target,
+                        "reward_elo": tier.reward_elo,
+                    },
+                )
             )
         await db.flush()
 
     @classmethod
+    async def sync_derived_progress(cls, db: AsyncSession, user_id: int) -> None:
+        xp_row = await db.get(UserXP, user_id)
+        if xp_row:
+            await cls.set_group_progress_at_least(
+                db,
+                user_id=user_id,
+                group_code="xp_collector",
+                progress_value=int(xp_row.total_xp or 0),
+            )
+
+        streak_row = await db.get(Streak, user_id)
+        if streak_row:
+            await cls.set_group_progress_at_least(
+                db,
+                user_id=user_id,
+                group_code="daily_grinder",
+                progress_value=int(streak_row.best_streak or streak_row.streak or 0),
+            )
+
+        rating = await db.get(UserDuelRating, user_id)
+        if rating:
+            await cls.set_group_progress_at_least(
+                db,
+                user_id=user_id,
+                group_code="duel_wins",
+                progress_value=int(rating.wins or 0),
+            )
+
+        duel_streak = await db.get(UserDuelWinStreakAchievement, user_id)
+        if duel_streak:
+            await cls.set_group_progress_at_least(
+                db,
+                user_id=user_id,
+                group_code="duel_win_streak",
+                progress_value=int(duel_streak.best_streak or 0),
+            )
+
+    @classmethod
     async def get_payload(cls, db: AsyncSession, user_id: int) -> dict:
         await cls.ensure_progress_rows(db, user_id)
+        await cls.sync_derived_progress(db, user_id)
 
         result = await db.execute(
             select(UserAchievementProgress)
@@ -283,6 +399,79 @@ class AchievementService:
             await cls.qualify_referral_for_user(db, referred_user_id=user_id)
 
     @classmethod
+    async def get_or_create_duel_win_streak(
+        cls,
+        db: AsyncSession,
+        user_id: int,
+    ) -> UserDuelWinStreakAchievement:
+        await db.execute(
+            insert(UserDuelWinStreakAchievement)
+            .values(
+                user_id=user_id,
+                current_streak=0,
+                best_streak=0,
+            )
+            .on_conflict_do_nothing(index_elements=["user_id"])
+        )
+        await db.flush()
+
+        result = await db.execute(
+            select(UserDuelWinStreakAchievement)
+            .where(UserDuelWinStreakAchievement.user_id == user_id)
+            .with_for_update()
+        )
+        return result.scalar_one()
+
+    @classmethod
+    async def update_duel_win_streak(
+        cls,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        won: bool,
+    ) -> int:
+        row = await cls.get_or_create_duel_win_streak(db, user_id)
+
+        if won:
+            row.current_streak = int(row.current_streak or 0) + 1
+            row.best_streak = max(int(row.best_streak or 0), int(row.current_streak or 0))
+        else:
+            row.current_streak = 0
+
+        await db.flush()
+
+        if won:
+            await cls.set_group_progress_at_least(
+                db,
+                user_id=user_id,
+                group_code="duel_win_streak",
+                progress_value=int(row.best_streak or 0),
+            )
+
+        return int(row.current_streak or 0)
+
+    @classmethod
+    async def record_duel_result(
+        cls,
+        db: AsyncSession,
+        *,
+        player1_id: int,
+        player2_id: int,
+        winner_id: int | None,
+    ) -> None:
+        if winner_id == player1_id:
+            await cls.increment_progress(db, player1_id, "duel_wins", 1)
+            await cls.update_duel_win_streak(db, user_id=player1_id, won=True)
+            await cls.update_duel_win_streak(db, user_id=player2_id, won=False)
+        elif winner_id == player2_id:
+            await cls.increment_progress(db, player2_id, "duel_wins", 1)
+            await cls.update_duel_win_streak(db, user_id=player2_id, won=True)
+            await cls.update_duel_win_streak(db, user_id=player1_id, won=False)
+        else:
+            await cls.update_duel_win_streak(db, user_id=player1_id, won=False)
+            await cls.update_duel_win_streak(db, user_id=player2_id, won=False)
+
+    @classmethod
     async def mark_unit_completed_if_new(
         cls,
         db: AsyncSession,
@@ -365,6 +554,8 @@ class AchievementService:
     @classmethod
     async def claim_reward(cls, db: AsyncSession, user_id: int, achievement_code: str) -> dict:
         await cls.ensure_progress_rows(db, user_id)
+        await cls.sync_derived_progress(db, user_id)
+
         result = await db.execute(
             select(UserAchievementProgress)
             .where(
@@ -378,7 +569,6 @@ class AchievementService:
         if not row:
             raise ValueError("Yutuq topilmadi")
 
-        # Previous tiers must be claimed before this tier can be claimed.
         previous_result = await db.execute(
             select(UserAchievementProgress)
             .where(

@@ -162,6 +162,12 @@ async def send_duel_final(final_data: dict):
                 player2_id=final_data["player2_id"],
                 winner_id=final_data.get("winner"),
             )
+            await AchievementService.record_duel_result(
+                db,
+                player1_id=final_data["player1_id"],
+                player2_id=final_data["player2_id"],
+                winner_id=final_data.get("winner"),
+            )
             await db.commit()
 
         processed_elo_results[elo_key] = elo_result

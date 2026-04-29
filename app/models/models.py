@@ -267,6 +267,25 @@ class UserCompletedUnitAchievement(Base):
     )
 
 
+
+
+class UserDuelWinStreakAchievement(Base):
+    __tablename__ = "user_duel_win_streak_achievements"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.tg_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    current_streak: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    best_streak: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class XPEvent(Base):
     __tablename__ = "xp_events"
 
