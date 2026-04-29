@@ -264,6 +264,15 @@ class Answer(Base):
     correct_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "word_id",
+            "mode",
+            "answer_session_id",
+            name="uq_answer_once_per_session_word_mode",
+        ),
+    )
 class EloExchange(Base):
     __tablename__ = "elo_exchange"
 

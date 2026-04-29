@@ -76,9 +76,7 @@ class LearningService:
                 last_result=None,
                 mastery_score=0,
             )
-            .on_conflict_do_nothing(
-                index_elements=["user_id", "word_id"]
-            )
+            .on_conflict_do_nothing(index_elements=["user_id", "word_id"])
         )
 
         await db.execute(stmt)
@@ -92,7 +90,6 @@ class LearningService:
             )
             .with_for_update()
         )
-
         return result.scalar_one()
 
     @staticmethod
@@ -116,9 +113,7 @@ class LearningService:
                 progress_percent=progress_percent,
                 is_completed=progress_percent >= 80,
             )
-            .on_conflict_do_nothing(
-                index_elements=["user_id", "unit_id", "mode"]
-            )
+            .on_conflict_do_nothing(index_elements=["user_id", "unit_id", "mode"])
         )
 
         await db.execute(stmt)
@@ -133,7 +128,6 @@ class LearningService:
             )
             .with_for_update()
         )
-
         return result.scalar_one()
 
     @staticmethod
@@ -161,7 +155,6 @@ class LearningService:
         )
 
         old_percent = int(progress.progress_percent or 0)
-
         if attempt_percent > old_percent:
             progress.total_questions = total_questions
             progress.correct_answers = correct_answers
@@ -170,6 +163,45 @@ class LearningService:
 
         await db.flush()
         return progress
+
+    @staticmethod
+    async def insert_answer_once(
+        db: AsyncSession,
+        user_id: int,
+        word_id: int,
+        unit_id: int,
+        mode: str,
+        answer_session_id: str,
+        is_correct: bool,
+        user_answer: str | None,
+        correct_answer: str | None,
+    ) -> bool:
+        """
+        Returns True only when this answer was newly inserted.
+        If the same user/word/mode/session answer already exists, returns False.
+        Requires migration unique constraint: uq_answer_once_per_session_word_mode.
+        """
+        stmt = (
+            insert(Answer)
+            .values(
+                user_id=user_id,
+                word_id=word_id,
+                unit_id=unit_id,
+                mode=mode,
+                answer_session_id=answer_session_id,
+                is_correct=is_correct,
+                user_answer=user_answer,
+                correct_answer=correct_answer,
+            )
+            .on_conflict_do_nothing(
+                index_elements=["user_id", "word_id", "mode", "answer_session_id"]
+            )
+            .returning(Answer.id)
+        )
+
+        result = await db.execute(stmt)
+        inserted_answer_id = result.scalar_one_or_none()
+        return inserted_answer_id is not None
 
     @staticmethod
     async def process_answer(
@@ -185,16 +217,6 @@ class LearningService:
     ):
         answer_session_id = (answer_session_id or f"legacy:{unit_id}:{mode}").strip()[:120]
 
-        duplicate_result = await db.execute(
-            select(Answer).where(
-                Answer.user_id == user_id,
-                Answer.word_id == word_id,
-                Answer.mode == mode,
-                Answer.answer_session_id == answer_session_id,
-            )
-        )
-        duplicate_answer = duplicate_result.scalar_one_or_none()
-
         progress = await LearningService.get_or_create_word_progress(
             db=db,
             user_id=user_id,
@@ -209,7 +231,19 @@ class LearningService:
 
         word = await db.get(Word, word_id)
 
-        if duplicate_answer:
+        inserted_answer = await LearningService.insert_answer_once(
+            db=db,
+            user_id=user_id,
+            word_id=word_id,
+            unit_id=unit_id,
+            mode=mode,
+            answer_session_id=answer_session_id,
+            is_correct=is_correct,
+            user_answer=user_answer,
+            correct_answer=correct_answer,
+        )
+
+        if not inserted_answer:
             total_xp = int(xp_row.total_xp or 0)
             level = XPService.level_from_xp(total_xp)
 
@@ -220,11 +254,12 @@ class LearningService:
                 "level": level,
                 "level_progress": XPService.level_progress_percent(total_xp),
                 "next_level_xp": XPService.next_level_xp(level),
-                "mastery_score": progress.mastery_score if progress else 0,
+                "mastery_score": int(progress.mastery_score or 0),
                 "streak": 0,
                 "mission_updates": [],
                 "duplicate": True,
                 "difficulty_score": float(word.difficulty_score or 0.5) if word else 0.5,
+                "xp_awarded": False,
             }
 
         should_award_xp = await LearningService.should_award_xp(
@@ -263,19 +298,6 @@ class LearningService:
                 )
             )
 
-        db.add(
-            Answer(
-                user_id=user_id,
-                word_id=word_id,
-                unit_id=unit_id,
-                mode=mode,
-                answer_session_id=answer_session_id,
-                is_correct=is_correct,
-                user_answer=user_answer,
-                correct_answer=correct_answer,
-            )
-        )
-
         streak = await StreakService.update(db, user_id)
 
         mission_updates = []
@@ -300,7 +322,7 @@ class LearningService:
             "level": level,
             "level_progress": XPService.level_progress_percent(total_xp),
             "next_level_xp": XPService.next_level_xp(level),
-            "mastery_score": progress.mastery_score,
+            "mastery_score": int(progress.mastery_score or 0),
             "streak": streak.streak,
             "mission_updates": mission_updates,
             "duplicate": False,
