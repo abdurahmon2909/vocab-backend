@@ -20,10 +20,12 @@ from app.models.models import (
     UserXP,
     Streak,
     UserWordProgress,
+    UserDuelRating,
 )
 from app.schemas.schemas import AnswerIn, NicknameUpdateIn
 from app.services.learning_service import LearningService
 from app.services.leaderboard_service import LeaderboardService
+from app.services.duel_rating_service import DuelRatingService
 from app.services.mission_service import MissionService
 from app.services.progress_service import ProgressService
 from app.services.test_service import TestService
@@ -146,9 +148,17 @@ async def get_user(
     streak_result = await db.execute(select(Streak).where(Streak.user_id == user.tg_id))
     streak_row = streak_result.scalar_one_or_none()
 
+    rating_result = await db.execute(
+        select(UserDuelRating).where(UserDuelRating.user_id == user.tg_id)
+    )
+    rating_row = rating_result.scalar_one_or_none()
+
     xp = xp_row.total_xp if xp_row else 0
     level = XPService.level_from_xp(xp)
     missions = await MissionService.get_daily_missions(db, user.tg_id)
+
+    elo = int(rating_row.elo if rating_row else DuelRatingService.DEFAULT_ELO)
+    rank_info = DuelRatingService.rank_from_elo(elo)
 
     display_name = user.nickname or user.first_name or user.username or "Learner"
 
@@ -170,6 +180,15 @@ async def get_user(
         "level": level,
         "level_progress": XPService.level_progress_percent(xp),
         "next_level_xp": XPService.next_level_xp(level),
+        "elo": elo,
+        "rank_title": rank_info["rank_title"],
+        "rank_icon": rank_info["rank_icon"],
+        "rank_min_elo": rank_info["rank_min_elo"],
+        "rank_max_elo": rank_info.get("rank_max_elo"),
+        "wins": int(rating_row.wins if rating_row else 0),
+        "losses": int(rating_row.losses if rating_row else 0),
+        "draws": int(rating_row.draws if rating_row else 0),
+        "games_played": int(rating_row.games_played if rating_row else 0),
         "streak": streak_row.streak if streak_row else 0,
         "best_streak": streak_row.best_streak if streak_row else 0,
         "missions": missions,

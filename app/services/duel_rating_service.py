@@ -14,6 +14,7 @@ class RankInfo:
     title: str
     icon: str
     min_elo: int
+    max_elo: int | None = None
 
 
 class DuelRatingService:
@@ -41,14 +42,18 @@ class DuelRatingService:
     }
     MIN_STREAK_MULTIPLIER = 0.2
 
+    # Frontenddagi src/config/rankConfig.js bilan bir xil tartib.
+    # Legend 10000 ELO dan boshlanadi.
     RANKS: list[RankInfo] = [
-        RankInfo("Bronze", "🥉", 0),
-        RankInfo("Silver", "⚪", 1000),
-        RankInfo("Gold", "🟡", 1200),
-        RankInfo("Platinum", "💠", 1400),
-        RankInfo("Diamond", "💎", 1600),
-        RankInfo("Master", "👑", 1800),
-        RankInfo("Legend", "🔥", 2000),
+        RankInfo("Bronze", "🥉", 0, 999),
+        RankInfo("Silver", "⚪", 1000, 1249),
+        RankInfo("Gold", "🟡", 1250, 1499),
+        RankInfo("Platinum", "🟣", 1500, 1799),
+        RankInfo("Diamond", "💎", 1800, 2199),
+        RankInfo("Master", "🔥", 2200, 2699),
+        RankInfo("Grandmaster", "⚡", 2700, 3999),
+        RankInfo("Mythic", "🌌", 4000, 9999),
+        RankInfo("Legend", "👑", 10000, None),
     ]
 
     @classmethod
@@ -66,6 +71,7 @@ class DuelRatingService:
             "rank_title": current.title,
             "rank_icon": current.icon,
             "rank_min_elo": current.min_elo,
+            "rank_max_elo": current.max_elo,
         }
 
     @staticmethod
