@@ -216,6 +216,57 @@ class DuelOpponentStreak(Base):
         onupdate=func.now(),
     )
 
+class Referral(Base):
+    __tablename__ = "referrals"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    referrer_id: Mapped[int] = mapped_column(ForeignKey("users.tg_id", ondelete="CASCADE"), index=True, nullable=False)
+    referred_user_id: Mapped[int] = mapped_column(ForeignKey("users.tg_id", ondelete="CASCADE"), unique=True, index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="pending", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    qualified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("referrer_id", "referred_user_id", name="uq_referral_pair"),
+    )
+
+
+class UserAchievementProgress(Base):
+    __tablename__ = "user_achievement_progress"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.tg_id", ondelete="CASCADE"), index=True, nullable=False)
+    achievement_code: Mapped[str] = mapped_column(String(120), nullable=False)
+    group_code: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    tier: Mapped[int] = mapped_column(Integer, nullable=False)
+    progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    target: Mapped[int] = mapped_column(Integer, nullable=False)
+    reward_elo: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    is_completed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_claimed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "achievement_code", name="uq_user_achievement_code"),
+        Index("ix_user_achievement_group", "user_id", "group_code"),
+    )
+
+
+class UserCompletedUnitAchievement(Base):
+    __tablename__ = "user_completed_unit_achievements"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.tg_id", ondelete="CASCADE"), index=True, nullable=False)
+    unit_id: Mapped[int] = mapped_column(ForeignKey("units.id", ondelete="CASCADE"), index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "unit_id", name="uq_user_completed_unit_achievement"),
+    )
+
+
 class XPEvent(Base):
     __tablename__ = "xp_events"
 

@@ -9,6 +9,7 @@ from app.services.learning_service import LearningService
 from app.services.test_service import TestService
 from app.services.xp_service import XPService
 from app.services.duel_rating_service import DuelRatingService
+from app.services.achievement_service import AchievementService
 from app.websocket.room_manager import Player, room_manager
 
 
@@ -109,6 +110,13 @@ async def award_duel_xp(user_id: int, amount: int = 1) -> int:
 
         xp_row.total_xp = int(xp_row.total_xp or 0) + amount
         db.add(XPEvent(user_id=user_id, amount=amount, reason="duel_correct"))
+        await AchievementService.increment_progress(
+            db=db,
+            user_id=user_id,
+            group_code="words_correct",
+            amount=amount,
+        )
+
         await db.commit()
 
     return amount

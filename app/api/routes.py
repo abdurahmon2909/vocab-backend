@@ -29,6 +29,7 @@ from app.services.progress_service import ProgressService
 from app.services.test_service import TestService
 from app.services.xp_service import XPService
 from app.services.xp_elo_exchange_service import XpEloExchangeService
+from app.services.achievement_service import AchievementService
 
 router = APIRouter(prefix="/api")
 
@@ -88,6 +89,7 @@ async def register_bot_start_user(
     result = await db.execute(select(User).where(User.tg_id == tg_id))
     user = result.scalar_one_or_none()
     now = datetime.now(timezone.utc)
+    is_new_bot_user = user is None or not bool(getattr(user, "is_bot_started", False))
 
     if not user:
         user = User(
@@ -114,6 +116,15 @@ async def register_bot_start_user(
             user.bot_started_at = now
         user.bot_blocked_at = None
         user.last_seen_at = now
+
+    await db.flush()
+
+    await AchievementService.register_referral_start(
+        db=db,
+        referred_user_id=tg_id,
+        start_payload=data.get("start_payload"),
+        is_new_bot_user=is_new_bot_user,
+    )
 
     await db.commit()
 
@@ -593,6 +604,13 @@ async def save_mode_best_progress(
         user_id=user.tg_id,
         unit_id=unit_id,
     )
+    if await MissionService.is_unit_completed_by_modes(db=db, user_id=user.tg_id, unit_id=unit_id):
+        await AchievementService.mark_unit_completed_if_new(
+            db=db,
+            user_id=user.tg_id,
+            unit_id=unit_id,
+        )
+
 
     await db.commit()
 
@@ -611,6 +629,34 @@ async def save_mode_best_progress(
         ),
         "mission_updates": mission_updates,
     }
+
+
+
+@router.get("/achievements")
+async def get_achievements(
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    return await AchievementService.get_payload(db, user.tg_id)
+
+
+@router.post("/achievements/claim")
+async def claim_achievement(
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    code = str(data.get("code") or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="Yutuq kodi kerak")
+
+    try:
+        result = await AchievementService.claim_reward(db, user.tg_id, code)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    await db.commit()
+    return result
 
 
 @router.get("/tts")

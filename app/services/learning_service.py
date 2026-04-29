@@ -13,6 +13,7 @@ from app.models.models import (
 from app.services.xp_service import XPService
 from app.services.streak_service import StreakService
 from app.services.mission_service import MissionService
+from app.services.achievement_service import AchievementService
 
 
 class LearningService:
@@ -308,6 +309,14 @@ class LearningService:
         if mode.startswith("weak"):
             mission_updates.extend(
                 await MissionService.increment(db, user_id, "weak_words", 1)
+            )
+
+        if is_correct and mode not in {"flashcard", "weak_flashcard"}:
+            await AchievementService.increment_progress(
+                db=db,
+                user_id=user_id,
+                group_code="words_correct",
+                amount=1,
             )
 
         await db.commit()
