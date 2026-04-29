@@ -62,6 +62,13 @@ class ProfileUpdateOut(BaseModel):
     display_name: str
 
 
+class RankOut(BaseModel):
+    rank_title: str
+    rank_icon: str
+    rank_min_elo: int
+    rank_max_elo: int | None = None
+
+
 class LeaderboardUserOut(BaseModel):
     rank: int
     user_id: int
@@ -74,18 +81,23 @@ class LeaderboardUserOut(BaseModel):
     elo: int = 1000
     rank_title: str = "Silver"
     rank_icon: str = "⚪"
+    rank_min_elo: int = 1000
+    rank_max_elo: int | None = 1249
     wins: int = 0
     losses: int = 0
     draws: int = 0
     games_played: int = 0
     badge: str
     badge_icon: str
+    total_users: int = 0
     is_me: bool = False
 
 
 class LeaderboardOut(BaseModel):
     me: LeaderboardUserOut | None = None
     top: list[LeaderboardUserOut]
+    total_users: int = 0
+    ranks: list[RankOut] = []
 
 
 class BookOut(BaseModel):
@@ -161,6 +173,7 @@ class TestQuestionOut(BaseModel):
     options: list[str]
     correct_answer: str
 
+
 class BookOut(BaseModel):
     id: int
     collection_id: int
@@ -174,6 +187,7 @@ class BookOut(BaseModel):
     total_units: int
     completed_units: int
     progress_percent: int
+
 
 class StatsOut(BaseModel):
     total_seen: int
