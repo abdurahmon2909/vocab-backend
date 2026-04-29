@@ -83,10 +83,18 @@ class LeaderboardService:
 
     @staticmethod
     async def _get_total_bot_started_users(db: AsyncSession) -> int:
-        result = await db.execute(
+        started_result = await db.execute(
             select(func.count(User.tg_id)).where(User.is_bot_started.is_(True))
         )
-        return int(result.scalar() or 0)
+        started_count = int(started_result.scalar() or 0)
+
+        # Eski bazada is_bot_started hali to‘ldirilmagan bo‘lishi mumkin.
+        # Shunda UI’da Users: 0 chiqib qolmasligi uchun User jadvalidagi umumiy sonni fallback qilamiz.
+        if started_count > 0:
+            return started_count
+
+        total_result = await db.execute(select(func.count(User.tg_id)))
+        return int(total_result.scalar() or 0)
 
     @staticmethod
     async def _get_rank_position(db: AsyncSession, elo: int) -> int:
