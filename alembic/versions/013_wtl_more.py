@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "013_way_to_legend_more_achievements"
+revision = "013_wtl_more"
 down_revision = "012_way_to_legend_achievements"
 branch_labels = None
 depends_on = None
