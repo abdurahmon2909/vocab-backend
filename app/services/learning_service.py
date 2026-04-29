@@ -1,4 +1,5 @@
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import (
@@ -59,6 +60,83 @@ class LearningService:
             word.difficulty_score = max(0.0, min(1.0, float(word.difficulty_score)))
 
     @staticmethod
+    async def get_or_create_word_progress(
+        db: AsyncSession,
+        user_id: int,
+        word_id: int,
+    ) -> UserWordProgress:
+        stmt = (
+            insert(UserWordProgress)
+            .values(
+                user_id=user_id,
+                word_id=word_id,
+                seen_count=0,
+                correct_count=0,
+                wrong_count=0,
+                last_result=None,
+                mastery_score=0,
+            )
+            .on_conflict_do_nothing(
+                index_elements=["user_id", "word_id"]
+            )
+        )
+
+        await db.execute(stmt)
+        await db.flush()
+
+        result = await db.execute(
+            select(UserWordProgress)
+            .where(
+                UserWordProgress.user_id == user_id,
+                UserWordProgress.word_id == word_id,
+            )
+            .with_for_update()
+        )
+
+        return result.scalar_one()
+
+    @staticmethod
+    async def get_or_create_mode_progress(
+        db: AsyncSession,
+        user_id: int,
+        unit_id: int,
+        mode: str,
+        total_questions: int,
+        correct_answers: int,
+        progress_percent: int,
+    ) -> ModeProgress:
+        stmt = (
+            insert(ModeProgress)
+            .values(
+                user_id=user_id,
+                unit_id=unit_id,
+                mode=mode,
+                total_questions=total_questions,
+                correct_answers=correct_answers,
+                progress_percent=progress_percent,
+                is_completed=progress_percent >= 80,
+            )
+            .on_conflict_do_nothing(
+                index_elements=["user_id", "unit_id", "mode"]
+            )
+        )
+
+        await db.execute(stmt)
+        await db.flush()
+
+        result = await db.execute(
+            select(ModeProgress)
+            .where(
+                ModeProgress.user_id == user_id,
+                ModeProgress.unit_id == unit_id,
+                ModeProgress.mode == mode,
+            )
+            .with_for_update()
+        )
+
+        return result.scalar_one()
+
+    @staticmethod
     async def update_mode_best_progress(
         db: AsyncSession,
         user_id: int,
@@ -72,28 +150,15 @@ class LearningService:
         else:
             attempt_percent = int((correct_answers / total_questions) * 100)
 
-        result = await db.execute(
-            select(ModeProgress).where(
-                ModeProgress.user_id == user_id,
-                ModeProgress.unit_id == unit_id,
-                ModeProgress.mode == mode,
-            )
+        progress = await LearningService.get_or_create_mode_progress(
+            db=db,
+            user_id=user_id,
+            unit_id=unit_id,
+            mode=mode,
+            total_questions=total_questions,
+            correct_answers=correct_answers,
+            progress_percent=attempt_percent,
         )
-        progress = result.scalar_one_or_none()
-
-        if not progress:
-            progress = ModeProgress(
-                user_id=user_id,
-                unit_id=unit_id,
-                mode=mode,
-                total_questions=total_questions,
-                correct_answers=correct_answers,
-                progress_percent=attempt_percent,
-                is_completed=attempt_percent >= 80,
-            )
-            db.add(progress)
-            await db.flush()
-            return progress
 
         old_percent = int(progress.progress_percent or 0)
 
@@ -130,13 +195,11 @@ class LearningService:
         )
         duplicate_answer = duplicate_result.scalar_one_or_none()
 
-        progress_result = await db.execute(
-            select(UserWordProgress).where(
-                UserWordProgress.user_id == user_id,
-                UserWordProgress.word_id == word_id,
-            )
+        progress = await LearningService.get_or_create_word_progress(
+            db=db,
+            user_id=user_id,
+            word_id=word_id,
         )
-        progress = progress_result.scalar_one_or_none()
 
         xp_row = await db.get(UserXP, user_id)
         if not xp_row:
@@ -172,29 +235,17 @@ class LearningService:
             is_correct=is_correct,
         )
 
-        if not progress:
-            progress = UserWordProgress(
-                user_id=user_id,
-                word_id=word_id,
-                seen_count=0,
-                correct_count=0,
-                wrong_count=0,
-                mastery_score=0,
-            )
-            db.add(progress)
-            await db.flush()
-
-        progress.seen_count += 1
+        progress.seen_count = int(progress.seen_count or 0) + 1
 
         if is_correct:
-            progress.correct_count += 1
+            progress.correct_count = int(progress.correct_count or 0) + 1
             progress.last_result = "correct"
         else:
-            progress.wrong_count += 1
+            progress.wrong_count = int(progress.wrong_count or 0) + 1
             progress.last_result = "wrong"
 
         progress.mastery_score = int(
-            (progress.correct_count / progress.seen_count) * 100
+            (int(progress.correct_count or 0) / int(progress.seen_count or 1)) * 100
         )
 
         if word:
@@ -203,7 +254,7 @@ class LearningService:
         xp_gain = LearningService.XP_PER_CORRECT_ANSWER if should_award_xp else 0
 
         if xp_gain > 0:
-            xp_row.total_xp += xp_gain
+            xp_row.total_xp = int(xp_row.total_xp or 0) + xp_gain
             db.add(
                 XPEvent(
                     user_id=user_id,
