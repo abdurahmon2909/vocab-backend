@@ -7,17 +7,80 @@ from app.services.xp_service import XPService
 
 
 # Frontenddagi src/config/rankConfig.js bilan bir xil tartib.
-# Legend endi 5000 ELO dan boshlanadi.
+# Legend endi 10000 ELO dan boshlanadi.
 RANKS = [
-    {"rank_title": "Bronze", "rank_icon": "🥉", "rank_min_elo": 0, "rank_max_elo": 999},
-    {"rank_title": "Silver", "rank_icon": "⚪", "rank_min_elo": 1000, "rank_max_elo": 1249},
-    {"rank_title": "Gold", "rank_icon": "🟡", "rank_min_elo": 1250, "rank_max_elo": 1499},
-    {"rank_title": "Platinum", "rank_icon": "🟣", "rank_min_elo": 1500, "rank_max_elo": 1799},
-    {"rank_title": "Diamond", "rank_icon": "💎", "rank_min_elo": 1800, "rank_max_elo": 2199},
-    {"rank_title": "Master", "rank_icon": "🔥", "rank_min_elo": 2200, "rank_max_elo": 2699},
-    {"rank_title": "Grandmaster", "rank_icon": "⚡", "rank_min_elo": 2700, "rank_max_elo": 3499},
-    {"rank_title": "Mythic", "rank_icon": "🌌", "rank_min_elo": 3500, "rank_max_elo": 4999},
-    {"rank_title": "Legend", "rank_icon": "👑", "rank_min_elo": 5000, "rank_max_elo": None},
+    {
+        "rank_title": "Bronze",
+        "rank_icon": "🥉",
+        "rank_min_elo": 0,
+        "rank_max_elo": 999,
+        "short_label": "Start",
+        "description": "Duel yo‘lini boshlagan jangchi.",
+    },
+    {
+        "rank_title": "Silver",
+        "rank_icon": "⚪",
+        "rank_min_elo": 1000,
+        "rank_max_elo": 1249,
+        "short_label": "Stable",
+        "description": "Asosiy bilim va tezlik shakllangan bosqich.",
+    },
+    {
+        "rank_title": "Gold",
+        "rank_icon": "🟡",
+        "rank_min_elo": 1250,
+        "rank_max_elo": 1499,
+        "short_label": "Sharp",
+        "description": "Aniqlik kuchayadi, duel natijalari barqarorlashadi.",
+    },
+    {
+        "rank_title": "Platinum",
+        "rank_icon": "🟣",
+        "rank_min_elo": 1500,
+        "rank_max_elo": 1799,
+        "short_label": "Elite",
+        "description": "Yuqori tezlik va xotira kuchli ishlay boshlaydi.",
+    },
+    {
+        "rank_title": "Diamond",
+        "rank_icon": "💎",
+        "rank_min_elo": 1800,
+        "rank_max_elo": 2199,
+        "short_label": "Crystal",
+        "description": "Kuchli duelchi. Xatolar kam, reaksiyalar tez.",
+    },
+    {
+        "rank_title": "Master",
+        "rank_icon": "🔥",
+        "rank_min_elo": 2200,
+        "rank_max_elo": 2699,
+        "short_label": "Fire",
+        "description": "Raqibga bosim beradigan tajribali o‘yinchi.",
+    },
+    {
+        "rank_title": "Grandmaster",
+        "rank_icon": "⚡",
+        "rank_min_elo": 2700,
+        "rank_max_elo": 3999,
+        "short_label": "Storm",
+        "description": "Top darajadagi tezkor fikrlash va duel strategiyasi.",
+    },
+    {
+        "rank_title": "Mythic",
+        "rank_icon": "🌌",
+        "rank_min_elo": 4000,
+        "rank_max_elo": 9999,
+        "short_label": "Cosmic",
+        "description": "Juda kam uchraydigan, havas qilinadigan rank.",
+    },
+    {
+        "rank_title": "Legend",
+        "rank_icon": "👑",
+        "rank_min_elo": 10000,
+        "rank_max_elo": None,
+        "short_label": "King",
+        "description": "Eng yuqori maqom. Haqiqiy Word Legends cho‘qqisi.",
+    },
 ]
 
 
@@ -72,6 +135,8 @@ class LeaderboardService:
             "rank_icon": rank_info["rank_icon"],
             "rank_min_elo": rank_info["rank_min_elo"],
             "rank_max_elo": rank_info["rank_max_elo"],
+            "rank_short_label": rank_info.get("short_label"),
+            "rank_description": rank_info.get("description"),
             "wins": int(rating.wins if rating else 0),
             "losses": int(rating.losses if rating else 0),
             "draws": int(rating.draws if rating else 0),
