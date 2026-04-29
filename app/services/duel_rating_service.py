@@ -23,8 +23,8 @@ class DuelRatingService:
     # Yumshoq ELO:
     # winner: +8 dan +28 gacha
     # loser: winner olganining taxminan yarmi yo‘qotadi
-    MIN_WIN_GAIN = 8
-    MAX_WIN_GAIN = 28
+    MIN_WIN_GAIN = 10
+    MAX_WIN_GAIN = 50
     MIN_LOSS = 4
 
     # Winner gain hisoblash uchun asosiy kuch.
