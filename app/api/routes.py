@@ -788,3 +788,27 @@ async def get_broadcast_users(
         "users": users,
         "count": len(users),
     }
+
+
+@router.post("/leaderboard/users/batch-stats")
+async def get_batch_leaderboard_stats(
+        data: dict,
+        db: AsyncSession = Depends(get_db),
+        user=Depends(get_current_user),
+):
+    """Batch get stats for multiple users - speeds up leaderboard loading"""
+    user_ids = data.get("user_ids", [])
+
+    if not user_ids:
+        return {}
+
+    if len(user_ids) > 50:
+        raise HTTPException(status_code=400, detail="Maximum 50 users per request")
+
+    results = {}
+    for user_id in user_ids:
+        stats = await StatsService.get_profile_stats_fast(db, user_id)
+        if stats:
+            results[str(user_id)] = stats
+
+    return results
