@@ -32,6 +32,7 @@ from app.services.test_service import TestService
 from app.services.xp_service import XPService
 from app.services.xp_elo_exchange_service import XpEloExchangeService
 from app.services.achievement_service import AchievementService
+from app.services.stats_service import StatsService
 
 router = APIRouter(prefix="/api")
 
@@ -240,6 +241,19 @@ async def get_leaderboard(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get("/leaderboard/users/{user_id}/profile-stats")
+async def get_leaderboard_user_profile_stats(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    profile = await StatsService.get_public_profile_stats(db, user_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
+
+    return profile
 
 
 @router.get("/stats")
