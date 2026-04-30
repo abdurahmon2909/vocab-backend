@@ -198,3 +198,12 @@ class StatsOut(BaseModel):
 
 
 NicknameUpdateIn = ProfileUpdateIn
+
+
+
+class LeaderboardProfileStatsOut(BaseModel):
+    user: dict
+    overview: dict
+    duel: dict
+    learning: dict
+    achievements: dict

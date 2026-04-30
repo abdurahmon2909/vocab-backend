@@ -263,6 +263,13 @@ async def get_stats(
 ):
     return await ProgressService.get_stats(db, user.tg_id)
 
+@router.get("/users/{user_id}/stats")
+async def get_user_profile_stats(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    return await StatsService.get_profile_stats(db, user_id)
 
 @router.get("/duel/challenge-users")
 async def get_duel_challenge_users(
