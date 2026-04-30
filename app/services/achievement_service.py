@@ -8,7 +8,7 @@ from urllib.parse import quote
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from dataclasses import dataclass
 from app.models.models import (
     Referral,
     Streak,

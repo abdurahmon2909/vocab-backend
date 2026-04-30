@@ -501,8 +501,6 @@ async def handle_websocket(websocket: WebSocket, user_id: int):
                 await start_duel_room(room_id)
 
             elif event == "join_duel":
-                room_id = await room_manager.join_duel_queue(player)
-
                 if room_id:
                     await start_duel_room(room_id)
                 else:

@@ -116,5 +116,5 @@ async def get_current_user_optional(
 
 async def get_db_transaction():
     async with SessionLocal() as session:
-        async with session.begin():
+        async with session.begin():  # to‘g‘ri (SQLAlchemy 2.x da async)
             yield session

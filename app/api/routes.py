@@ -271,21 +271,6 @@ async def get_user_profile_stats(
 ):
     return await StatsService.get_profile_stats(db, user_id)
 
-
-@router.get("/leaderboard/users/{user_id}/profile-stats")
-async def get_leaderboard_user_profile_stats(
-        user_id: int,
-        db: AsyncSession = Depends(get_db),
-        user=Depends(get_current_user),
-):
-    """Get public profile stats for leaderboard user"""
-    profile = await StatsService.get_profile_stats(db, user_id)
-    if not profile:
-        raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
-
-    # Leaderboard formatiga moslashtirish
-    return profile
-
 @router.get("/duel/challenge-users")
 async def get_duel_challenge_users(
     q: str | None = Query(default=None, max_length=80),
