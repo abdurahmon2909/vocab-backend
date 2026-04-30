@@ -201,35 +201,53 @@ class StatsService:
 
     @staticmethod
     async def get_profile_stats(db: AsyncSession, user_id: int):
-        """Full version with achievements - for single user"""
+        """Full version with achievements - for single user profile"""
+        # Get fast stats first
         fast_stats = await StatsService.get_profile_stats_fast(db, user_id)
         if not fast_stats:
             return None
 
-        # Add achievements
-        achievements_payload = await AchievementService.get_payload(db, user_id)
-        groups = achievements_payload.get("groups", []) if isinstance(achievements_payload, dict) else []
+        # Get achievements data from AchievementService
+        try:
+            achievements_payload = await AchievementService.get_payload(db, user_id)
+            groups = achievements_payload.get("groups", []) if isinstance(achievements_payload, dict) else []
 
-        all_tiers = []
-        for group in groups:
-            tiers = group.get("tiers") or group.get("achievements") or []
-            if tiers:
-                all_tiers.extend(tiers)
-            elif group.get("active_tier"):
-                all_tiers.append(group["active_tier"])
+            all_tiers = []
+            for group in groups:
+                tiers = group.get("tiers") or group.get("achievements") or []
+                if tiers:
+                    all_tiers.extend(tiers)
+                elif group.get("active_tier"):
+                    all_tiers.append(group["active_tier"])
 
-        total_achievements = len(all_tiers)
-        completed_achievements = sum(1 for item in all_tiers if item.get("is_completed") or item.get("completed"))
-        claimed_achievements = sum(1 for item in all_tiers if item.get("is_claimed") or item.get("claimed"))
-        achievement_progress = round((completed_achievements / total_achievements) * 100) if total_achievements else 0
+            total_achievements = len(all_tiers)
+            completed_achievements = sum(1 for item in all_tiers if item.get("is_completed") or item.get("completed"))
+            claimed_achievements = sum(1 for item in all_tiers if item.get("is_claimed") or item.get("claimed"))
+            achievement_progress = round(
+                (completed_achievements / total_achievements) * 100) if total_achievements else 0
 
-        fast_stats["achievements"] = {
-            "completed": completed_achievements,
-            "claimed": claimed_achievements,
-            "unclaimed": completed_achievements - claimed_achievements,
-            "total": total_achievements,
-            "progress": achievement_progress,
-            "progress_percent": achievement_progress,
-        }
+            fast_stats["achievements"] = {
+                "completed": completed_achievements,
+                "claimed": claimed_achievements,
+                "unclaimed": completed_achievements - claimed_achievements,
+                "total": total_achievements,
+                "progress": achievement_progress,
+                "progress_percent": achievement_progress,
+            }
+        except Exception as e:
+            # If achievements service fails, keep default values
+            fast_stats["achievements"] = {
+                "completed": 0,
+                "claimed": 0,
+                "unclaimed": 0,
+                "total": 0,
+                "progress": 0,
+                "progress_percent": 0,
+            }
 
         return fast_stats
+
+    @staticmethod
+    async def get_public_profile_stats(db: AsyncSession, user_id: int):
+        """Get public profile stats for leaderboard"""
+        return await StatsService.get_profile_stats(db, user_id)
